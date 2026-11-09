@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!--
+    Content-Security-Policy: the browser itself enforces that this page can only
+    talk to the local server it was loaded from ('self'). Even if a bug or a
+    malicious dependency tried to send video frames somewhere else, the request
+    would be blocked.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; worker-src 'self' blob:; form-action 'none'; base-uri 'none'">
+  <title>Privacy Blur</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path d="M7 14c1.5 2 3 3 5 3s3.5-1 5-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><rect x="6" y="7" width="12" height="4" rx="1" fill="currentColor"/></svg>
+      <span>Privacy Blur</span>
+    </div>
+    <div class="local-badge" title="Video files are opened directly by your browser. Nothing is uploaded; the page's security policy blocks connections to any other server.">
+      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M7 11V8a5 5 0 0 1 10 0v3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="5" y="11" width="14" height="10" rx="2" fill="currentColor"/></svg>
+      Runs entirely on this computer — nothing is uploaded
+    </div>
+  </header>
+
+  <nav class="steps" id="steps">
+    <button data-step="1" class="active">1 · Choose video</button>
+    <button data-step="2" disabled>2 · Who stays visible</button>
+    <button data-step="3" disabled>3 · Process</button>
+    <button data-step="4" disabled>4 · Review &amp; export</button>
+  </nav>
+
+  <main>
+    <!-- STEP 1 -->
+    <section class="step" id="step1">
+      <h1>Choose a video</h1>
+      <p class="lead">Pick a video file from this computer. It is opened by your browser only — it is never uploaded anywhere.</p>
+      <label class="drop" id="drop">
+        <input type="file" id="fileInput" accept="video/*">
+        <svg viewBox="0 0 24 24" width="40" height="40" aria-hidden="true"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <strong>Click to choose a video</strong>
+        <span>or drag and drop it here (MP4, MOV, WebM)</span>
+      </label>
+      <p class="status" id="modelStatus">Loading face detection models…</p>
+    </section>
+
+    <!-- STEP 2 -->
+    <section class="step" id="step2" hidden>
+      <h1>Who should stay visible?</h1>
+      <p class="lead">We take a few snapshots from the video and find the faces in them. <b>Every face is blurred by default.</b> Click the faces of the student(s) who should stay visible. Tip: pick the same student in several snapshots (different angles) for better recognition.</p>
+      <div class="split">
+        <div class="player-col">
+          <video id="video" controls playsinline preload="auto"></video>
+          <div class="row">
+            <label>Snapshots <input type="number" id="snapCount" min="2" max="40" value="8"></label>
+            <button id="scanBtn" class="primary">Find faces in snapshots</button>
+            <button id="scanFrameBtn" title="Pause the video on a moment where the student is clearly visible, then click">Add faces from current frame</button>
+          </div>
+          <p class="status" id="scanStatus"></p>
+        </div>
+        <div class="people-col">
+          <div class="people-head">
+            <span id="keepSummary">No faces found yet.</span>
+          </div>
+          <div id="people" class="people"></div>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="toStep3" class="primary" disabled>Next: process video →</button>
+      </div>
+    </section>
+
+    <!-- STEP 3 -->
+    <section class="step" id="step3" hidden>
+      <h1>Process the video</h1>
+      <p class="lead">Every part of the video is scanned for faces on this computer. Faces that match the student(s) you picked stay visible; all other faces are blurred.</p>
+      <details class="settings" id="analysisSettings">
+        <summary>Detection settings</summary>
+        <label>Scan rate
+          <select id="fps">
+            <option value="5">5 frames/sec (fastest)</option>
+            <option value="10" selected>10 frames/sec (recommended)</option>
+            <option value="15">15 frames/sec</option>
+            <option value="30">30 frames/sec (slowest, most thorough)</option>
+          </select>
+        </label>
+        <label>Detection sensitivity
+          <input type="range" id="minConf" min="0.2" max="0.7" step="0.05" value="0.35">
+          <output id="minConfOut">0.35</output>
+          <small>Lower finds more faces (incl. blurry/turned) but may blur a few non-faces.</small>
+        </label>
+        <label class="check"><input type="checkbox" id="smallFaces"> Small / distant faces mode <small>(≈5× slower; use for wide classroom shots)</small></label>
+      </details>
+      <div class="actions">
+        <button id="analyzeBtn" class="primary">Start processing</button>
+        <button id="cancelBtn" hidden>Cancel</button>
+      </div>
+      <div class="progress" hidden id="progressWrap"><div class="bar" id="progressBar"></div></div>
+      <p class="status" id="analyzeStatus"></p>
+      <canvas id="analysisCanvas" class="analysis-canvas" hidden></canvas>
+    </section>
+
+    <!-- STEP 4 -->
+    <section class="step" id="step4" hidden>
+      <h1>Review &amp; export</h1>
+      <p class="lead warn">Automatic detection can miss faces (e.g. side profiles, very small or partly hidden faces). <b>Watch the whole preview before sharing.</b></p>
+      <div class="split">
+        <div class="player-col">
+          <canvas id="previewCanvas" class="preview"></canvas>
+          <p class="draw-hint" id="drawHint" hidden>Drawing mode: <b>drag</b> a box over a face (or <b>click</b> it) to blur it from this moment on.</p>
+          <div class="row transport">
+            <button id="playBtn" class="icon" aria-label="Play">▶</button>
+            <input type="range" id="seekBar" min="0" max="1000" value="0" step="1">
+            <span id="timeLabel" class="time">0:00 / 0:00</span>
+          </div>
+        </div>
+        <div class="side-col">
+          <label class="check"><input type="checkbox" id="debugBoxes"> Show detection boxes <small>(preview only — green = kept, red = blurred)</small></label>
+          <label>Match strictness
+            <input type="range" id="threshold" min="0.35" max="0.6" step="0.01" value="0.5">
+            <output id="thresholdOut">0.50</output>
+            <small>Lower = stricter: a face must look more like your picks to stay visible. If the chosen student gets blurred sometimes, raise it slightly. If another child is left visible, lower it.</small>
+          </label>
+          <label>Blur area
+            <input type="range" id="pad" min="0.1" max="0.8" step="0.05" value="0.35">
+            <output id="padOut">0.35</output>
+          </label>
+          <label>Blur strength
+            <input type="range" id="cells" min="3" max="12" step="1" value="6">
+            <output id="cellsOut">6</output>
+            <small>Number of blocks across a face; fewer = stronger.</small>
+          </label>
+          <label>Keep blurring a lost face for
+            <input type="range" id="holdSec" min="0" max="2" step="0.1" value="0.6">
+            <output id="holdSecOut">0.6 s</output>
+            <small>When a face is half out of frame, turned, or covered, the detector can lose it. The blur stays on (and keeps moving the way the face was going) for this long.</small>
+          </label>
+          <p class="status" id="timelineStats"></p>
+
+          <div class="manual-box">
+            <div class="manual-head">
+              <strong>Manual blur</strong>
+              <button id="drawToggle" aria-pressed="false">✎ Draw blur box</button>
+            </div>
+            <small>Spot a face that isn't blurred? Pause there, turn on <b>Draw blur box</b> and drag over it. Each box blurs for 2 seconds from that moment; adjust the times below. If the person moves, leave the box selected, go to a later moment and drag again: the box follows them between your drawings.</small>
+            <div id="manualList" class="manual-list"></div>
+          </div>
+          <div class="export-box">
+            <button id="exportBtn" class="primary">Export blurred video</button>
+            <div class="progress" hidden id="exportProgressWrap"><div class="bar" id="exportProgressBar"></div></div>
+            <p class="status" id="exportStatus">Export plays the video through once in real time and records the blurred result. Keep this tab visible while exporting.</p>
+            <a id="downloadLink" class="download" hidden>Download</a>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer"><span id="backendInfo"></span></footer>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
