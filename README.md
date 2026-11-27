@@ -25,7 +25,7 @@ No install or build step. All libraries and model weights live in `vendor/` and 
 
 1. **Choose video**: pick or drag in an MP4/MOV/WebM file.
 2. **Who stays visible**: click **Find faces in snapshots**. The faces it finds are grouped by person. Click a student's face, or **Keep all** for that person, to keep them visible. Everyone else is blurred by default. For better recognition, pause on a clear shot of the student and click **Add faces from current frame**.
-3. **Process**: scans the whole video (10 frames/sec by default). For wide shots with small faces, turn on *Small / distant faces mode* under Detection settings.
+3. **Process**: scans the whole video (10 frames/sec by default). Two extra detection layers are on by default under Detection settings: *Boost contrast*, which finds faces that are hard to see in dim, backlit or shadowed shots (this matters most for darker-skinned students), and *Body-pose backup*, which blurs the head of anyone whose body is visible but whose face wasn't found. For wide shots with small faces, also turn on *Small / distant faces mode*.
 4. **Review & export**: watch the blurred preview. Turn on *Show detection boxes* to see what was kept (green) and blurred (red). If needed, adjust *Match strictness*, *Blur area*, *Blur strength* or *Keep blurring a lost face for*; these apply instantly without re-processing. Then click **Export blurred video** and **Download**.
 
 ### Manual blur (for anything the automatic blur missed)
@@ -37,7 +37,7 @@ In step 4, pause where something identifiable is visible and click **✎ Draw bl
 - To start a **separate** blur, click the selected one in the list to deselect it first. Use **Remove** to delete one.
 - Manual blurs work on anything, not just faces: name tags, logos, a name written on a whiteboard.
 
-> ⚠️ Automatic face detection is not perfect. Faces in strong profile, very small, or partly hidden can be missed. Always watch the full preview before sharing.
+> ⚠️ Automatic face detection is not perfect. Faces in strong profile, very small, partly hidden, or darker-skinned faces in very dark footage can still be missed. Always watch the full preview before sharing.
 
 ## Files
 
@@ -48,7 +48,7 @@ In step 4, pause where something identifiable is visible and click **✎ Draw bl
 | `engine.js` | Detection, matching, tracking, smoothing, blur rendering |
 | `serve.py` | Local static server, loopback only, with the correct `.wasm` MIME type |
 | `vendor/` | `@vladmandic/face-api` 1.7.15 (bundles TF.js 4.22), plus TF.js WASM binaries (MIT / Apache-2.0) |
-| `models/` | SSD-MobileNetV1 face detector, 68-point landmarks, and a 128-d face-recognition model |
+| `models/` | SSD-MobileNetV1 face detector, 68-point landmarks, a 128-d face-recognition model, and MoveNet MultiPose (Google, Apache-2.0; TF.js conversion from `@vladmandic/human-models`) for the body-pose backup |
 | `DECISIONS.md` | Log of the design decisions made while building this |
 
 Debug: append `?backend=wasm` or `?backend=cpu` to the URL to force a backend.
