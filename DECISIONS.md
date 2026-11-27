@@ -142,6 +142,20 @@ Feedback: *"it's often missing faces with dark skin during testing."*
 
 41. **Main branch.** Round 3 was built on `claude/dark-skin-detection-eval-9w01qp` and merged into `main` on request.
 
+## Round 4: progress bars for every slow operation (2026-11-27)
+
+42. **Every asynchronous operation shows a progress bar** (requested). A moving bar is used only where progress can't be measured.
+    - **Loading the models** (about 22 MB). This is a bar under the step tabs, visible on every step until the models are ready, because people can reach step 2 before loading finishes. It counts up in megabytes ("8.2 of 21.9 MB"), then shows "Preparing…" while the models warm up.
+      - The libraries' own loaders (`loadFromUri`, `loadGraphModel`) report nothing useful, so `engine.js` now fetches the weight files itself with a streamed reader and hands them over in memory (`loadFromWeightMap`, `tf.io.fromMemory`). Results are unchanged: the same test clip gave the same 270 detections as before.
+      - The total comes from the model manifests, which match the `.bin` sizes exactly, so it stays right where a server compresses responses or omits Content-Length (GitHub Pages).
+      - The bar starts in the moving state in the HTML itself, so it shows activity while the 1.3 MB library script is still downloading.
+      - If a face model fails, the bar turns into an error message that asks for a reload. A pose download still running in parallel can no longer overwrite that message. If only the pose model fails, the app loads and the body-pose switch is disabled.
+    - **Opening the video file.** This shows a moving bar until the first frame decodes. It is usually too fast to see, and is there for large or unusual files.
+    - **Finding faces in snapshots.** Progress is shown per snapshot. A single "current frame" scan uses the moving bar.
+    - **Processing.** The bar is reset and shows "Starting…" before the first frame (it used to sit empty, or show the previous run's value), then counts per frame.
+    - **Export.** A moving bar while getting ready, then the bar follows the recorded time, then a moving bar for "Finishing the file…", then 100%.
+    - The bars have `role="progressbar"` with `aria-valuenow`, the status lines are `aria-live="polite"`, and the moving bar becomes a gentle pulse under `prefers-reduced-motion`.
+
 ## Known limitations / ideas for later
 
 - **Recognition on darker faces is untested.** This round fixed *detection*. If the recognition model also separates darker-skinned children less well, two of them could score as the same person and the wrong child could be kept visible. That is worse than a missed detection and needs its own test, ideally with consenting real footage.

@@ -10,8 +10,64 @@ export { faceapi };
 // Model / backend setup
 // ---------------------------------------------------------------------------
 
-export async function initModels(preferredBackend) {
+// ---------------------------------------------------------------------------
+// Weight downloads with byte-level progress. The libraries' own loaders
+// (loadFromUri / loadGraphModel) report little or nothing, so the weight files
+// are fetched here and handed over already in memory.
+// ---------------------------------------------------------------------------
+
+const DTYPE_BYTES = { float32: 4, int32: 4, bool: 1, uint8: 1, uint16: 2, float16: 2 };
+
+// Exact byte size of a weights manifest (works even when the server
+// compresses responses or omits Content-Length).
+function manifestBytes(groups) {
+  let total = 0;
+  for (const g of groups) for (const w of g.weights) {
+    const n = w.shape.reduce((a, b) => a * b, 1);
+    total += n * DTYPE_BYTES[w.quantization ? w.quantization.dtype : w.dtype];
+  }
+  return total;
+}
+
+async function fetchWithProgress(url, onBytes) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Could not load ${url.split('/').pop()} (HTTP ${res.status})`);
+  if (!res.body) { const buf = await res.arrayBuffer(); onBytes(buf.byteLength); return new Uint8Array(buf); }
+  const reader = res.body.getReader(), chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value); size += value.length; onBytes(value.length);
+  }
+  const out = new Uint8Array(size);
+  let o = 0;
+  for (const c of chunks) { out.set(c, o); o += c.length; }
+  return out;
+}
+
+/** Fetch a manifest's weight files; returns {specs, data: ArrayBuffer}. */
+async function fetchWeights(baseUrl, groups, onBytes) {
+  const specs = [], parts = [];
+  for (const g of groups) {
+    specs.push(...g.weights);
+    for (const p of g.paths) parts.push(fetchWithProgress(new URL(p, baseUrl).href, onBytes));
+  }
+  const bufs = await Promise.all(parts);
+  const data = new Uint8Array(bufs.reduce((s, b) => s + b.length, 0));
+  let o = 0;
+  for (const b of bufs) { data.set(b, o); o += b.length; }
+  return { specs, data: data.buffer };
+}
+
+/**
+ * Load the TF.js backend and all models.
+ * `onProgress({stage, fraction, loaded, total})`: stage is 'backend',
+ * 'download' (loaded/total in bytes) or 'prepare'; fraction is overall 0..1.
+ */
+export async function initModels(preferredBackend, onProgress = () => {}) {
   const tf = faceapi.tf;
+  onProgress({ stage: 'backend', fraction: 0 });
   // Point the WebAssembly backend at our locally vendored .wasm files so it
   // never tries to download them from a CDN.
   tf.setWasmPaths(new URL('./vendor/tfjs-wasm/', import.meta.url).href);
@@ -33,26 +89,59 @@ export async function initModels(preferredBackend) {
   }
   if (!backend) throw new Error('No TensorFlow.js backend could be initialised.');
 
-  const modelUrl = new URL('./models', import.meta.url).href;
-  await Promise.all([
-    faceapi.nets.ssdMobilenetv1.loadFromUri(modelUrl),
-    faceapi.nets.faceLandmark68Net.loadFromUri(modelUrl),
-    faceapi.nets.faceRecognitionNet.loadFromUri(modelUrl),
-  ]);
+  // Overall progress: backend 0-3%, downloads 3-90% (by bytes), warm-up 90-100%.
+  onProgress({ stage: 'backend', fraction: 0.03 });
+  const base = new URL('./models/', import.meta.url).href;
+  const getJson = async (name) => {
+    const r = await fetch(base + name);
+    if (!r.ok) throw new Error(`Could not load ${name} (HTTP ${r.status})`);
+    return r.json();
+  };
+  const faceNets = [
+    [faceapi.nets.ssdMobilenetv1, 'ssd_mobilenetv1_model-weights_manifest.json'],
+    [faceapi.nets.faceLandmark68Net, 'face_landmark_68_model-weights_manifest.json'],
+    [faceapi.nets.faceRecognitionNet, 'face_recognition_model-weights_manifest.json'],
+  ];
+  const faceManifests = await Promise.all(faceNets.map(([, m]) => getJson(m)));
   // Body-pose model (MoveNet MultiPose). Optional: if it fails to load, face
   // detection still works and the pose backup is simply unavailable.
-  try {
-    poseModel = await tf.loadGraphModel(new URL('./models/movenet-multipose.json', import.meta.url).href);
-  } catch (err) {
-    console.warn('[privacy-blur] pose model unavailable', err);
-    poseModel = null;
+  let poseJson = null;
+  try { poseJson = await getJson('movenet-multipose.json'); } catch (err) { console.warn('[privacy-blur] pose model unavailable', err); }
+
+  const total = faceManifests.reduce((s, m) => s + manifestBytes(m), 0) + (poseJson ? manifestBytes(poseJson.weightsManifest) : 0);
+  let loaded = 0;
+  const onBytes = (n) => {
+    loaded += n;
+    onProgress({ stage: 'download', loaded: Math.min(loaded, total), total, fraction: 0.03 + 0.87 * Math.min(1, loaded / total) });
+  };
+  onBytes(0);
+  const posePromise = poseJson
+    ? fetchWeights(base, poseJson.weightsManifest, onBytes).catch((err) => { console.warn('[privacy-blur] pose model unavailable', err); return null; })
+    : Promise.resolve(null);
+  const faceWeights = await Promise.all(faceManifests.map((m) => fetchWeights(base, m, onBytes)));
+  faceNets.forEach(([net], i) => net.loadFromWeightMap(tf.io.decodeWeights(faceWeights[i].data, faceWeights[i].specs)));
+  const poseWeights = await posePromise;
+  poseModel = null;
+  if (poseWeights) {
+    try {
+      poseModel = await tf.loadGraphModel(tf.io.fromMemory({
+        modelTopology: poseJson.modelTopology, format: poseJson.format, generatedBy: poseJson.generatedBy,
+        convertedBy: poseJson.convertedBy, signature: poseJson.signature,
+        weightSpecs: poseWeights.specs, weightData: poseWeights.data,
+      }));
+    } catch (err) {
+      console.warn('[privacy-blur] pose model unavailable', err);
+    }
   }
 
   // Warm up (first inference compiles shaders and is slow).
+  onProgress({ stage: 'prepare', fraction: 0.9 });
   const warm = document.createElement('canvas');
   warm.width = warm.height = 128;
-  await faceapi.detectAllFaces(warm, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }));
+  await faceapi.detectAllFaces(warm, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 })).withFaceLandmarks().withFaceDescriptors();
+  onProgress({ stage: 'prepare', fraction: 0.96 });
   if (poseModel) await detectPeople(warm);
+  onProgress({ stage: 'prepare', fraction: 1 });
   return backend;
 }
 

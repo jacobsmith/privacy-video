@@ -61,21 +61,60 @@ function setStatus(el, text, isError = false) {
   el.classList.toggle('error', isError);
 }
 
+// Progress bars: set(fraction) for measurable progress, busy() for work that
+// can't be measured (shows a moving bar), hide() when done.
+function progress(wrapId) {
+  const wrap = $(wrapId), bar = wrap.querySelector('.bar');
+  return {
+    set(f) {
+      const pct = Math.round(Math.min(1, Math.max(0, f)) * 1000) / 10;
+      wrap.hidden = false;
+      wrap.classList.remove('indeterminate');
+      bar.style.width = `${pct}%`;
+      wrap.setAttribute('aria-valuenow', String(Math.round(pct)));
+    },
+    busy() {
+      wrap.hidden = false;
+      wrap.classList.add('indeterminate');
+      bar.style.width = '';
+      wrap.removeAttribute('aria-valuenow');
+    },
+    hide() { wrap.hidden = true; },
+  };
+}
+const modelBar = progress('modelProgressWrap');
+const fileBar = progress('fileProgressWrap');
+const scanBar = progress('scanProgressWrap');
+const analyzeBar = progress('progressWrap');
+const exportBar = progress('exportProgressWrap');
+const mb = (n) => (n / 1e6).toFixed(1);
+
 // ---------------------------------------------------------------------------
 // Model loading
 // ---------------------------------------------------------------------------
+let loadFailed = false;
 (async () => {
   try {
     const t0 = performance.now();
     const params = new URLSearchParams(location.search);
-    const backend = await initModels(params.get('backend') || undefined);
+    const backend = await initModels(params.get('backend') || undefined, ({ stage, fraction, loaded, total }) => {
+      if (loadFailed) return; // a parallel download may still report after another one failed
+      modelBar.set(fraction);
+      $('modelLoadText').textContent = stage === 'download'
+        ? `Downloading face detection models… ${mb(loaded)} of ${mb(total)} MB`
+        : stage === 'prepare' ? 'Preparing face detection models…' : 'Starting face detection…';
+    });
     state.ready = true;
+    $('modelLoad').hidden = true;
     if (!poseAvailable()) { $('poseLayer').checked = false; $('poseLayer').disabled = true; }
     setStatus($('modelStatus'), `Face detection ready (${((performance.now() - t0) / 1000).toFixed(1)}s).`);
     $('backendInfo').textContent = `Face models run locally via TensorFlow.js (${backend} backend). No data leaves this device.`;
   } catch (err) {
     console.error(err);
-    setStatus($('modelStatus'), `Could not load the face models: ${err.message}. Make sure you opened the app through the local server (see README).`, true);
+    loadFailed = true;
+    modelBar.hide();
+    $('modelLoad').classList.add('error');
+    setStatus($('modelLoadText'), `Could not load the face models: ${err.message}. Make sure you opened the app through the local server (see README), then reload the page.`, true);
   }
 })();
 
@@ -106,6 +145,8 @@ async function loadFile(file) {
   state.manual = []; state.selectedManual = null;
   renderManualList();
   video.src = state.objectUrl;
+  fileBar.busy();
+  setStatus($('modelStatus'), `Opening ${file.name}…`);
   try {
     await new Promise((res, rej) => {
       video.addEventListener('loadeddata', res, { once: true });
@@ -114,7 +155,10 @@ async function loadFile(file) {
   } catch (err) {
     setStatus($('modelStatus'), err.message, true);
     return;
+  } finally {
+    fileBar.hide();
   }
+  setStatus($('modelStatus'), '');
   renderPeople();
   enableStep(2); enableStep(3, false); enableStep(4, false);
   $('downloadLink').hidden = true;
@@ -129,7 +173,7 @@ const snapCanvas = document.createElement('canvas');
 let faceSeq = 0;
 
 async function scanAt(times) {
-  if (!state.ready) { setStatus($('scanStatus'), 'Models are still loading, one moment…'); return; }
+  if (!state.ready) { setStatus($('scanStatus'), 'The face detection models are still loading (see the bar at the top). Try again when it finishes.'); return; }
   state.busy = true;
   $('scanBtn').disabled = $('scanFrameBtn').disabled = true;
   const wasTime = video.currentTime;
@@ -140,7 +184,8 @@ async function scanAt(times) {
       const t = times[i];
       const key = t.toFixed(2);
       if (state.scannedTimes.has(key)) continue;
-      setStatus($('scanStatus'), `Looking for faces in snapshot ${i + 1} of ${times.length}…`);
+      setStatus($('scanStatus'), times.length > 1 ? `Looking for faces in snapshot ${i + 1} of ${times.length}…` : 'Looking for faces in this frame…');
+      if (times.length > 1) scanBar.set(i / times.length); else scanBar.busy();
       await seek(video, t);
       grabFrame(video, snapCanvas);
       // Contrast enhancement here too, so darker-skinned students in dim or
@@ -159,6 +204,7 @@ async function scanAt(times) {
     setStatus($('scanStatus'), `Face scan failed: ${err.message}`, true);
   } finally {
     state.busy = false;
+    scanBar.hide();
     $('scanBtn').disabled = $('scanFrameBtn').disabled = false;
     if (times.length > 1) await seek(video, wasTime);
     renderPeople();
@@ -267,13 +313,15 @@ $('analyzeBtn').addEventListener('click', async () => {
   if (!state.ready) return;
   state.busy = true; state.cancel = false;
   $('analyzeBtn').disabled = true; $('cancelBtn').hidden = false;
-  $('progressWrap').hidden = false; $('analysisCanvas').hidden = false;
+  $('analysisCanvas').hidden = false;
+  analyzeBar.busy();
+  setStatus($('analyzeStatus'), 'Starting…');
   const actx = $('analysisCanvas').getContext('2d');
   const opts = analysisOptions();
   const t0 = performance.now();
   try {
     const samples = await analyzeVideo(video, opts, ({ i, n, canvas, dets, eta }) => {
-      $('progressBar').style.width = `${(100 * i) / n}%`;
+      analyzeBar.set(i / n);
       setStatus($('analyzeStatus'), `Scanning frame ${i} of ${n} — ${dets.length} face${dets.length === 1 ? '' : 's'} in this frame — about ${Math.ceil(eta)}s left`);
       if (i % 2 === 0 || i === n) {
         const ac = $('analysisCanvas');
@@ -292,6 +340,7 @@ $('analyzeBtn').addEventListener('click', async () => {
       }
     }, () => state.cancel);
     state.samples = samples;
+    analyzeBar.set(1);
     state.tracks = linkTracks(samples);
     state.analysisKey = JSON.stringify(opts);
     const total = samples.reduce((s, x) => s + x.dets.length, 0);
@@ -299,6 +348,7 @@ $('analyzeBtn').addEventListener('click', async () => {
     enableStep(4);
     showStep(4);
   } catch (err) {
+    analyzeBar.hide();
     if (err.message === 'cancelled') setStatus($('analyzeStatus'), 'Cancelled.');
     else { console.error(err); setStatus($('analyzeStatus'), `Processing failed: ${err.message}`, true); }
   } finally {
@@ -596,7 +646,8 @@ $('exportBtn').addEventListener('click', async () => {
   a.speakers.gain.value = 0; // silence speakers while recording; recording still gets audio
   ['exportBtn', 'playBtn', 'seekBar', 'threshold', 'pad', 'cells', 'holdSec', 'drawToggle'].forEach((id) => { $(id).disabled = true; });
   $('downloadLink').hidden = true;
-  $('exportProgressWrap').hidden = false;
+  exportBar.busy();
+  setStatus($('exportStatus'), 'Getting ready to record…');
   video.pause();
   stopPreviewLoop();
 
@@ -617,7 +668,7 @@ $('exportBtn').addEventListener('click', async () => {
     vTrack.requestFrame();
     onFrameHook = (t) => {
       vTrack.requestFrame();
-      $('exportProgressBar').style.width = `${(100 * t) / video.duration}%`;
+      exportBar.set(t / video.duration);
       setStatus($('exportStatus'), `Recording… ${fmtTime(t)} / ${fmtTime(video.duration)}`);
     };
     const ended = new Promise((res) => video.addEventListener('ended', res, { once: true }));
@@ -625,6 +676,8 @@ $('exportBtn').addEventListener('click', async () => {
     await video.play();
     await ended;
     // allow last frame to flush
+    exportBar.busy();
+    setStatus($('exportStatus'), 'Finishing the file…');
     await new Promise((r) => setTimeout(r, 250));
     recorder.stop();
     await stopped;
@@ -636,10 +689,11 @@ $('exportBtn').addEventListener('click', async () => {
     link.download = `${base}-blurred.${ext}`;
     link.textContent = `Download ${link.download} (${(blob.size / 1e6).toFixed(1)} MB)`;
     link.hidden = false;
-    $('exportProgressBar').style.width = '100%';
+    exportBar.set(1);
     setStatus($('exportStatus'), 'Export finished. The file is created on this computer; click Download to save it.');
   } catch (err) {
     console.error(err);
+    exportBar.hide();
     setStatus($('exportStatus'), `Export failed: ${err.message}`, true);
     if (recorder.state !== 'inactive') recorder.stop();
   } finally {

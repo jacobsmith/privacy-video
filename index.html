@@ -33,6 +33,15 @@
     <button data-step="4" disabled>4 · Review &amp; export</button>
   </nav>
 
+  <!-- Model download / start-up progress. Starts in "working" mode in the
+       HTML itself so it shows activity while the scripts are still loading. -->
+  <div class="loadbar" id="modelLoad">
+    <div class="loadbar-inner">
+      <p class="status" id="modelLoadText" aria-live="polite">Loading face detection models…</p>
+      <div class="progress indeterminate" id="modelProgressWrap" role="progressbar" aria-label="Loading face detection models" aria-valuemin="0" aria-valuemax="100"><div class="bar"></div></div>
+    </div>
+  </div>
+
   <main>
     <!-- STEP 1 -->
     <section class="step" id="step1">
@@ -44,7 +53,8 @@
         <strong>Click to choose a video</strong>
         <span>or drag and drop it here (MP4, MOV, WebM)</span>
       </label>
-      <p class="status" id="modelStatus">Loading face detection models…</p>
+      <div class="progress" hidden id="fileProgressWrap" role="progressbar" aria-label="Opening video" aria-valuemin="0" aria-valuemax="100"><div class="bar"></div></div>
+      <p class="status" id="modelStatus" aria-live="polite"></p>
     </section>
 
     <!-- STEP 2 -->
@@ -59,7 +69,8 @@
             <button id="scanBtn" class="primary">Find faces in snapshots</button>
             <button id="scanFrameBtn" title="Pause the video on a moment where the student is clearly visible, then click">Add faces from current frame</button>
           </div>
-          <p class="status" id="scanStatus"></p>
+          <div class="progress" hidden id="scanProgressWrap" role="progressbar" aria-label="Finding faces in snapshots" aria-valuemin="0" aria-valuemax="100"><div class="bar"></div></div>
+          <p class="status" id="scanStatus" aria-live="polite"></p>
         </div>
         <div class="people-col">
           <div class="people-head">
@@ -126,8 +137,8 @@
         <button id="analyzeBtn" class="primary">Start processing</button>
         <button id="cancelBtn" hidden>Cancel</button>
       </div>
-      <div class="progress" hidden id="progressWrap"><div class="bar" id="progressBar"></div></div>
-      <p class="status" id="analyzeStatus"></p>
+      <div class="progress" hidden id="progressWrap" role="progressbar" aria-label="Processing video" aria-valuemin="0" aria-valuemax="100"><div class="bar" id="progressBar"></div></div>
+      <p class="status" id="analyzeStatus" aria-live="polite"></p>
       <canvas id="analysisCanvas" class="analysis-canvas" hidden></canvas>
     </section>
 
@@ -178,7 +189,7 @@
           </div>
           <div class="export-box">
             <button id="exportBtn" class="primary">Export blurred video</button>
-            <div class="progress" hidden id="exportProgressWrap"><div class="bar" id="exportProgressBar"></div></div>
+            <div class="progress" hidden id="exportProgressWrap" role="progressbar" aria-label="Exporting video" aria-valuemin="0" aria-valuemax="100"><div class="bar" id="exportProgressBar"></div></div>
             <p class="status" id="exportStatus">Export plays the video through once in real time and records the blurred result. Keep this tab visible while exporting.</p>
             <a id="downloadLink" class="download" hidden>Download</a>
           </div>

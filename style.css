@@ -147,6 +147,23 @@ output { font-variant-numeric: tabular-nums; margin-left: 6px; }
 
 .progress { height: 8px; background: var(--border); border-radius: 99px; overflow: hidden; margin-top: 14px; }
 .progress .bar { height: 100%; width: 0; background: var(--accent); transition: width 0.15s; }
+/* "Working, but no measurable progress" state */
+.progress.indeterminate .bar { width: 30%; transition: none; animation: progress-slide 1.3s ease-in-out infinite; }
+@keyframes progress-slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+@media (prefers-reduced-motion: reduce) {
+  .progress.indeterminate .bar { width: 100%; animation: progress-pulse 2s ease-in-out infinite; }
+  @keyframes progress-pulse { 50% { opacity: 0.4; } }
+}
+
+/* App-wide model loading bar, under the step tabs */
+.loadbar { padding: 12px 24px 0; }
+.loadbar-inner {
+  max-width: 1152px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 10px 16px 12px;
+}
+.loadbar .status { margin: 0; }
+.loadbar .progress { margin-top: 6px; }
+.loadbar.error .loadbar-inner { border-color: var(--blur); }
 
 .export-box { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 14px; }
 .download {
