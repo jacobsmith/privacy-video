@@ -118,6 +118,28 @@ button.icon { width: 44px; }
 .settings label, .side-col label { display: block; margin: 10px 0; }
 .settings small, .side-col small { display: block; color: var(--muted); font-size: 12px; }
 label.check small { display: inline; }
+.settings label.check small { display: block; margin: 2px 0 0 24px; }
+.settings-note { color: var(--muted); font-size: 13px; margin: 14px 0 4px; }
+
+/* Fast / Medium / Slow picker */
+.modes { border: none; margin: 0 0 14px; padding: 0; display: grid; gap: 8px; }
+.modes legend { font-weight: 600; margin-bottom: 8px; padding: 0; }
+.mode {
+  display: flex; gap: 10px; align-items: flex-start; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--surface);
+}
+.mode:hover { border-color: var(--accent); }
+.mode:has(input:checked) { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.mode input { margin-top: 4px; accent-color: var(--accent); flex: none; }
+.mode-body { display: block; min-width: 0; }
+.mode-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-weight: 600; }
+.mode-time { font-weight: 400; font-size: 13px; color: var(--muted); }
+.mode-badge {
+  font-weight: 600; font-size: 11px; color: var(--accent-text); background: var(--accent);
+  border-radius: 99px; padding: 1px 8px;
+}
+.mode-text { display: block; color: var(--muted); font-size: 14px; margin-top: 3px; }
+.mode-custom { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
 input[type=range] { vertical-align: middle; width: 200px; accent-color: var(--accent); }
 .transport input[type=range] { width: auto; }
 select { font: inherit; padding: 4px; border-radius: 6px; background: var(--surface); color: var(--text); border: 1px solid var(--border); }

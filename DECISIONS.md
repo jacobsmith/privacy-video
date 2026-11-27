@@ -134,6 +134,14 @@ Feedback: *"it's often missing faces with dark skin during testing."*
 
 39. **App smoke test** (real UI through `serve.py` and its CSP, 8 s generated clip, 4 s backlit + 4 s very dim with noise): no errors; processing 46 s → 96 s; the kept person stayed visible (match distance 0.05–0.07) with both settings, so the new layers don't disturb the keep path. The processing preview now colours boxes by source: yellow = face detector, cyan = contrast pass, orange = pose backup (dashed = head estimate only).
 
+40. **Fast / Medium / Slow picker instead of three loose checkboxes** (requested). The layers are optional, and the trade-offs are written on each option, so the choice is made by what the footage looks like rather than by knowing what CLAHE or MoveNet are.
+    - **Fast** = face detector only (the pre-round-3 behaviour). **Medium** (default) = + contrast boost + body-pose backup. **Slow** = + small / distant faces tiles.
+    - Times are relative to Fast (≈1×, 2–3×, 10×) rather than seconds, because speed depends on the computer and backend (WebGL vs WASM). Measured per 720p frame on the WASM backend: 0.35 s, 0.9 s, 3.8 s.
+    - The three switches stay under *Advanced settings* with a one-line trade-off each. The picker just sets them; changing one by hand shows "Custom" unless the switches match a mode again. If the pose model fails to load, its switch is disabled and ignored when matching modes.
+    - Medium is the default rather than Fast: the app's rule is that ambiguity resolves toward blurring (#9), and Fast was the mode that produced the original complaint.
+
+41. **Main branch.** Round 3 was built on `claude/dark-skin-detection-eval-9w01qp` and merged into `main` on request.
+
 ## Known limitations / ideas for later
 
 - **Recognition on darker faces is untested.** This round fixed *detection*. If the recognition model also separates darker-skinned children less well, two of them could score as the same person and the wrong child could be kept visible. That is worse than a missed detection and needs its own test, ideally with consenting real footage.

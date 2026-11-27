@@ -77,8 +77,33 @@
     <section class="step" id="step3" hidden>
       <h1>Process the video</h1>
       <p class="lead">Every part of the video is scanned for faces on this computer. Faces that match the student(s) you picked stay visible; all other faces are blurred.</p>
+      <fieldset class="modes" id="modePicker">
+        <legend>How thorough should the face search be?</legend>
+        <label class="mode">
+          <input type="radio" name="mode" value="fast">
+          <span class="mode-body">
+            <span class="mode-title">Fast <span class="mode-time">quickest</span></span>
+            <span class="mode-text">Face detector only. Fine for bright, close-up footage. Misses more faces in dim, backlit or shadowed shots (especially darker-skinned faces) and faces far from the camera.</span>
+          </span>
+        </label>
+        <label class="mode">
+          <input type="radio" name="mode" value="medium" checked>
+          <span class="mode-body">
+            <span class="mode-title">Medium <span class="mode-time">about 2–3× longer than Fast</span> <span class="mode-badge">Recommended</span></span>
+            <span class="mode-text">Adds a contrast-boost pass and a body-pose backup. Finds most faces that are hard to see in poor lighting, including darker-skinned faces. May blur a few extra heads or background patches.</span>
+          </span>
+        </label>
+        <label class="mode">
+          <input type="radio" name="mode" value="slow">
+          <span class="mode-body">
+            <span class="mode-title">Slow <span class="mode-time">about 10× longer than Fast</span></span>
+            <span class="mode-text">Also searches the frame in zoomed-in sections. Best for wide classroom shots, small or distant faces, and very dark footage. Blurs a few more non-faces.</span>
+          </span>
+        </label>
+        <p class="mode-custom" id="modeCustom" hidden>Custom: you've changed the options under Advanced settings.</p>
+      </fieldset>
       <details class="settings" id="analysisSettings">
-        <summary>Detection settings</summary>
+        <summary>Advanced settings</summary>
         <label>Scan rate
           <select id="fps">
             <option value="5">5 frames/sec (fastest)</option>
@@ -90,11 +115,12 @@
         <label>Detection sensitivity
           <input type="range" id="minConf" min="0.2" max="0.7" step="0.05" value="0.35">
           <output id="minConfOut">0.35</output>
-          <small>Lower finds more faces (incl. blurry/turned) but may blur a few non-faces.</small>
+          <small>Lower finds more faces (incl. blurry/turned) but may blur a few non-faces. In tests, lowering it did little for faces lost to poor lighting; the options below help much more.</small>
         </label>
-        <label class="check"><input type="checkbox" id="enhance" checked> Boost contrast to find faces in dim, backlit or shadowed shots <small>(recommended; finds many more darker-skinned faces in poor lighting; ≈2× slower)</small></label>
-        <label class="check"><input type="checkbox" id="poseLayer" checked> Body-pose backup: blur the head of anyone whose face wasn't found <small>(recommended; may blur a few extra heads)</small></label>
-        <label class="check"><input type="checkbox" id="smallFaces"> Small / distant faces mode <small>(≈5× slower; use for wide classroom shots, and also helps with darker faces in poor light)</small></label>
+        <p class="settings-note">The Fast / Medium / Slow choice turns these on or off. Each one can only add blur, never remove it.</p>
+        <label class="check"><input type="checkbox" id="enhance" checked> Contrast boost <small>Runs the detector again on a contrast-enhanced copy of each frame. Finds faces in dim, backlit or shadowed shots, especially darker-skinned faces. About 2× longer. May blur a few non-faces.</small></label>
+        <label class="check"><input type="checkbox" id="poseLayer" checked> Body-pose backup <small>Finds people by body shape and blurs the head of anyone whose face wasn't found. Adds about 20%. May blur a few extra heads, sometimes briefly over the student you kept when their face isn't visible.</small></label>
+        <label class="check"><input type="checkbox" id="smallFaces"> Small / distant faces <small>Also searches four zoomed-in sections of each frame. Finds small faces in wide shots and helps further with darker faces in poor light. About 4–5× longer on top of the other options.</small></label>
       </details>
       <div class="actions">
         <button id="analyzeBtn" class="primary">Start processing</button>

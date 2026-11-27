@@ -25,7 +25,15 @@ No install or build step. All libraries and model weights live in `vendor/` and 
 
 1. **Choose video**: pick or drag in an MP4/MOV/WebM file.
 2. **Who stays visible**: click **Find faces in snapshots**. The faces it finds are grouped by person. Click a student's face, or **Keep all** for that person, to keep them visible. Everyone else is blurred by default. For better recognition, pause on a clear shot of the student and click **Add faces from current frame**.
-3. **Process**: scans the whole video (10 frames/sec by default). Two extra detection layers are on by default under Detection settings: *Boost contrast*, which finds faces that are hard to see in dim, backlit or shadowed shots (this matters most for darker-skinned students), and *Body-pose backup*, which blurs the head of anyone whose body is visible but whose face wasn't found. For wide shots with small faces, also turn on *Small / distant faces mode*.
+3. **Process**: pick how thorough the face search should be, then click **Start processing**. The video is scanned at 10 frames/sec by default.
+
+   | Mode | What it runs | Time | Use it for |
+   |---|---|---|---|
+   | **Fast** | Face detector only | 1× | Bright, close-up footage. Misses more faces in dim, backlit or shadowed shots (especially darker-skinned faces) and faces far from the camera. |
+   | **Medium** (default) | + contrast boost + body-pose backup | about 2–3× | Most videos. Finds most faces that are hard to see in poor lighting. May blur a few extra heads or background patches. |
+   | **Slow** | + small / distant faces (zoomed-in sections) | about 10× | Wide classroom shots, small faces, very dark footage. Blurs a few more non-faces. |
+
+   Under **Advanced settings** each layer can be switched on or off by itself, and the scan rate and sensitivity can be changed. Every layer can only add blur, never remove it. In testing, lowering the sensitivity did little for faces lost to poor lighting; the layers help much more (see `DECISIONS.md` #34–41).
 4. **Review & export**: watch the blurred preview. Turn on *Show detection boxes* to see what was kept (green) and blurred (red). If needed, adjust *Match strictness*, *Blur area*, *Blur strength* or *Keep blurring a lost face for*; these apply instantly without re-processing. Then click **Export blurred video** and **Download**.
 
 ### Manual blur (for anything the automatic blur missed)

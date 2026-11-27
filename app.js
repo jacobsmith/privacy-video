@@ -233,6 +233,29 @@ $('toStep3').addEventListener('click', () => {
 // ---------------------------------------------------------------------------
 $('minConf').addEventListener('input', (e) => { $('minConfOut').textContent = (+e.target.value).toFixed(2); });
 
+// Fast / Medium / Slow just set the three layer switches under Advanced
+// settings. Changing a switch by hand shows "Custom" unless the switches
+// happen to match one of the modes.
+const MODES = {
+  fast: { enhance: false, poseLayer: false, smallFaces: false },
+  medium: { enhance: true, poseLayer: true, smallFaces: false },
+  slow: { enhance: true, poseLayer: true, smallFaces: true },
+};
+const LAYERS = ['enhance', 'poseLayer', 'smallFaces'];
+const modeRadios = [...document.querySelectorAll('input[name="mode"]')];
+function applyMode(mode) {
+  for (const id of LAYERS) if (!$(id).disabled) $(id).checked = MODES[mode][id];
+  $('modeCustom').hidden = true;
+}
+function syncModeFromSwitches() {
+  const match = Object.keys(MODES).find((m) => LAYERS.every((id) => $(id).disabled || $(id).checked === MODES[m][id]));
+  for (const r of modeRadios) r.checked = r.value === match;
+  $('modeCustom').hidden = !!match;
+}
+for (const r of modeRadios) r.addEventListener('change', () => { if (r.checked) applyMode(r.value); });
+for (const id of LAYERS) $(id).addEventListener('change', syncModeFromSwitches);
+applyMode('medium');
+
 function analysisOptions() {
   return {
     fps: +$('fps').value, minConfidence: +$('minConf').value, smallFaces: $('smallFaces').checked,
