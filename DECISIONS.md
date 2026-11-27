@@ -105,7 +105,40 @@ Feedback: *"when a person's face was half shown, it stopped being blurred and wa
     - Exported. In the output file, fine detail inside the badge box dropped from about 15 to about 5 during its range (pixelated) and was unchanged outside it.
     - Re-scanned the whole output: the only faces found are the kept person and already-pixelated blobs at the right edge (checked by eye), and the previously leaking frames are now blurred.
 
+## Round 3: darker-skinned faces missed in poor lighting (2026-11-27)
+
+Feedback: *"it's often missing faces with dark skin during testing."*
+
+34. **Measured before changing anything.** No skin-tone-labelled dataset could be downloaded in the build environment, so the test is a controlled simulation. Ten photos (27 faces the detector finds confidently in the originals) were rendered as 1280×720, JPEG-compressed frames. The face region was darkened in steps (×1, ×0.5, ×0.35, ×0.25) to approximate darker skin under the same light, and combined with lighting (normal, dim ×0.55, very dim ×0.3 + sensor noise, backlit, hard side light, warm cast) and face size (full, half, 30%). The harness ran the app's own `engine.js` in headless Chromium (WASM backend). Caveats: darkening is a feathered oval on the face only (neck and arms untouched), so it shows the trend and size of the effect, not a demographic benchmark; it also flatters the pose layer, which sees untouched bodies, except in the very-dim case, which darkens everything.
+
+35. **Findings.** In good light with large faces, darker faces were found as reliably as lighter ones. The gap opens when light gets worse or faces get smaller, the normal case for classroom footage. Examples (faces found of 27, old pipeline): half size, dim, ×0.35 → 16 (vs 24 untouched); half size, backlit, ×0.35 → 9 (vs 24); 30% size, normal light, ×0.35 → 12 (vs 19); full size, very dim, ×0.5 → 5 (vs 24). **Lowering the confidence threshold barely helps** (backlit ×0.35: 12 → 12): the detector isn't scoring these faces just under the cut-off, it isn't seeing them. The two levers that do help are **contrast** and **pixels on the face**.
+
+36. **Contrast-enhanced second pass (CLAHE), on by default.** The SSD detector is run again on a copy of the frame with contrast-limited adaptive histogram equalisation on luminance (8 regions across, clip 3; colour kept by scaling RGB by Y'/Y). Each region gets its own tone curve, so a dark face next to a bright window is lifted without blowing out the window. Compared against plain gamma brightening (γ 0.5 and 0.35): CLAHE won clearly in very dim footage (full size ×0.5: 19/27 vs 10–11 for gamma vs 5 today) and was at least as good everywhere else, for 0–2 extra boxes over all 10 images. Faces already found in the original frame keep their original descriptor; only new faces come from the enhanced copy. It is also used for the step-2 snapshots, so darker-skinned students show up in the picker and can be kept. Cost: about 2× detection time.
+
+37. **Body-pose backup layer (MoveNet MultiPose), on by default.** A different kind of signal: it finds people from body shape, not facial contrast. For each person whose estimated head has no face box yet, the head area is cropped (2.2× the head), enlarged to ~256 px, contrast-enhanced, and searched with the face detector again; if a face is found there it is used like any other detection. If not, the estimated head box itself is blurred.
+    - Model: Google's MoveNet MultiPose Lightning (Apache-2.0), TF.js conversion from `@vladmandic/human-models` 3.0.4, vendored in `models/` (9.4 MB). It runs on the TF.js already bundled with face-api, so no new library.
+    - Input long side 320 px: larger inputs found *fewer* people (512×352 found 1 of 4 in a test photo; 256–320 found 4 of 4). Person score ≥ 0.2, keypoints ≥ 0.25. Head size comes from the largest of ear distance, eye distance, shoulder width and keypoint spread; with no head keypoints, it is placed above the shoulders.
+    - **Pose-only boxes can only add blur.** They have no face descriptor, so they never match a kept student, and they are excluded from a track's keep vote (otherwise frames where only the pose saw the kept child could outvote the frames where their face matched). Track linking uses geometry alone when a descriptor is missing.
+    - Limits: at most 6 people per pass (the model's cap); *Small / distant faces mode* also runs it on the 4 tiles. Pose models have their own skin-tone biases; this layer is a backup, not a guarantee.
+
+38. **End-to-end results** (faces covered by a blur box after the usual padding, of 27; old → contrast → contrast + pose → + small-faces tiles):
+    - half size, backlit, ×0.35: 9 → 12 → 21 → 27
+    - half size, backlit, ×0.5: 13 → 18 → 25 → 27
+    - half size, dim, ×0.35: 16 → 22 → 25 → 27
+    - half size, side-lit, ×0.35: 16 → 22 → 25 → 26
+    - full size, very dim, ×0.5: 5 → 19 → 22
+    - half size, very dim, ×0.35: 1 → 8 → 11 → 20 (still the weak spot)
+    - untouched faces, any lighting: unchanged or better (24–26 → 26–27)
+    - extra boxes: 0–1 per 10 images without tiles, up to 4 with tiles. Time per frame (WASM, 720p): 0.35 s → 0.75 s → 0.9 s → 3.8 s.
+    *Small / distant faces mode* stays off by default because of its cost, but its label now says it also helps darker faces in poor light.
+
+39. **App smoke test** (real UI through `serve.py` and its CSP, 8 s generated clip, 4 s backlit + 4 s very dim with noise): no errors; processing 46 s → 96 s; the kept person stayed visible (match distance 0.05–0.07) with both settings, so the new layers don't disturb the keep path. The processing preview now colours boxes by source: yellow = face detector, cyan = contrast pass, orange = pose backup (dashed = head estimate only).
+
 ## Known limitations / ideas for later
+
+- **Recognition on darker faces is untested.** This round fixed *detection*. If the recognition model also separates darker-skinned children less well, two of them could score as the same person and the wrong child could be kept visible. That is worse than a missed detection and needs its own test, ideally with consenting real footage.
+- Very dark, noisy footage of darker-skinned people is still missed often without *Small / distant faces mode*. A newer face detector (e.g. MediaPipe BlazeFace full-range, or YuNet) could be benchmarked against SSD-MobileNetV1 in the same harness.
+- The skin-tone results above are a simulation; checking against real classroom footage covering a range of skin tones is the next step.
 
 - Faces the detector never finds (strong profile, back of head turning, heavy occlusion, motion blur) are only blurred if they're near a face that was found (hold/edge-hold) or covered by a manual blur. Reviewing the preview is still required.
 - Manual blurs aren't saved: reloading the page or loading another video clears them.
