@@ -3,8 +3,15 @@ import {
   initModels, poseAvailable, seek, grabFrame, detectFaces, cropThumb, clusterFaces,
   analyzeVideo, linkTracks, buildTimeline, regionsAt, drawFrame,
 } from './engine.js';
+import { VERSION, BUILT_UTC } from './version.js';
 
 const $ = (id) => document.getElementById(id);
+
+// Version stamp next to the app name (YY.MM.DD.HH.MM, UTC), so it's easy to
+// tell whether a browser has loaded the latest update.
+$('appVersion').textContent = `v${VERSION}`;
+$('appVersion').title = `Version ${VERSION}, updated ${BUILT_UTC.replace('T', ' ').replace('Z', ' UTC')}`;
+console.info(`[privacy-blur] version ${VERSION} (${BUILT_UTC})`);
 
 const state = {
   ready: false,

@@ -58,5 +58,6 @@ In step 4, pause where something identifiable is visible and click **✎ Draw bl
 | `vendor/` | `@vladmandic/face-api` 1.7.15 (bundles TF.js 4.22), plus TF.js WASM binaries (MIT / Apache-2.0) |
 | `models/` | SSD-MobileNetV1 face detector, 68-point landmarks, a 128-d face-recognition model, and MoveNet MultiPose (Google, Apache-2.0; TF.js conversion from `@vladmandic/human-models`) for the body-pose backup |
 | `DECISIONS.md` | Log of the design decisions made while building this |
+| `version.js`, `tools/stamp-version.sh` | Version stamp shown next to the app name (`vYY.MM.DD.HH.MM`, UTC). Run `sh tools/stamp-version.sh && git add version.js` before committing a change. |
 
 Debug: append `?backend=wasm` or `?backend=cpu` to the URL to force a backend.

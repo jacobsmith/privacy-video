@@ -39,6 +39,7 @@ body {
   padding: 12px 24px; background: var(--surface); border-bottom: 1px solid var(--border);
 }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 650; font-size: 17px; }
+.version { font-weight: 400; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .local-badge {
   display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--keep);
   border: 1px solid currentColor; border-radius: 999px; padding: 3px 10px;

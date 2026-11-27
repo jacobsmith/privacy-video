@@ -171,6 +171,11 @@ Feedback: *"it's often missing faces with dark skin during testing."*
     - Tested in Chromium with a script that imitates iOS: it withholds `loadeddata` and keeps `readyState` at 1 until `play()` is called. Without the fix the app stuck on "Decoding the first frame…", as reported; with it, step 2 opens with the video paused at 0:00 and unmuted. Desktop behaviour is unchanged.
     - Not tested on a real iPhone (none available in the build environment). The later steps on iOS are also unverified: frame-by-frame seeking, memory use with the models loaded, and export, which plays the video with sound and records it.
 
+45. **Version stamp next to the app name** (requested), e.g. `v26.11.27.01.26` = 2026-11-27 01:26 UTC, so it's easy to see whether a browser (including Safari on a phone, which caches) has loaded the latest update.
+    - The stamp lives in `version.js`, which is loaded with the app's code, so it reports the version actually running, not what the server has now. GitHub Pages lets browsers cache files for up to 10 minutes, so a reload may still be needed.
+    - It is set by `tools/stamp-version.sh`, run right before each commit. Times are UTC, so the stamp is the same on every device and matches git history. Hovering shows the full date.
+    - A git pre-commit hook could do this automatically, but hooks can't be shipped in a repo and installing one was not done here; running the script by hand keeps commits predictable.
+
 ## Known limitations / ideas for later
 
 - **Recognition on darker faces is untested.** This round fixed *detection*. If the recognition model also separates darker-skinned children less well, two of them could score as the same person and the wrong child could be kept visible. That is worse than a missed detection and needs its own test, ideally with consenting real footage.
