@@ -156,6 +156,17 @@ Feedback: *"it's often missing faces with dark skin during testing."*
     - **Export.** A moving bar while getting ready, then the bar follows the recorded time, then a moving bar for "Finishing the file…", then 100%.
     - The bars have `role="progressbar"` with `aria-valuenow`, the status lines are `aria-live="polite"`, and the moving bar becomes a gentle pulse under `prefers-reduced-motion`.
 
+43. **Explain what "Opening …" means, and why it might not finish** (feedback: *"Opening IMG_8292.mov… give more info on what this means"*). The status now says what the browser is doing and what it found:
+    - First: "Opening IMG_8292.mov (240 MB)… Your browser is reading the video from this computer and decoding the first frame. Nothing is uploaded."
+    - Then: "found a 1920×1080 video, 2:31 long. Decoding the first frame…"
+    - If it fails, a plain-language reason and a fix. The commonest cause is an iPhone .mov recorded as "High Efficiency" (HEVC), which many browsers can't decode. Three cases are told apart:
+      - can't play at all (unsupported or damaged file)
+      - can't decode (the decode error)
+      - plays sound only (Chrome on Linux opens HEVC files with audio but no picture, which used to slip through with a 0×0 video)
+    - iPhone-specific advice (Safari or an HEVC-capable PC, export as MP4, or Camera → Formats → Most Compatible) is shown only for .mov files. Other files get "try another browser or convert to MP4 (H.264)".
+    - Some browsers never report an error for a format they can't decode, and just keep waiting. After 10 s the message says it's still opening and explains the likely cause.
+    - Tested in Chromium with an H.264 .mov (opens), an HEVC .mov with and without audio, random bytes named .mov, a truncated MP4, and a simulated hang.
+
 ## Known limitations / ideas for later
 
 - **Recognition on darker faces is untested.** This round fixed *detection*. If the recognition model also separates darker-skinned children less well, two of them could score as the same person and the wrong child could be kept visible. That is worse than a missed detection and needs its own test, ideally with consenting real footage.

@@ -107,7 +107,7 @@ let loadFailed = false;
     state.ready = true;
     $('modelLoad').hidden = true;
     if (!poseAvailable()) { $('poseLayer').checked = false; $('poseLayer').disabled = true; }
-    setStatus($('modelStatus'), `Face detection ready (${((performance.now() - t0) / 1000).toFixed(1)}s).`);
+    if (!state.file) setStatus($('modelStatus'), `Face detection ready (${((performance.now() - t0) / 1000).toFixed(1)}s).`);
     $('backendInfo').textContent = `Face models run locally via TensorFlow.js (${backend} backend). No data leaves this device.`;
   } catch (err) {
     console.error(err);
@@ -131,6 +131,24 @@ drop.addEventListener('drop', (e) => {
   if (f) loadFile(f);
 });
 
+/**
+ * Plain-language explanation for a video the browser can't play. iPhone
+ * .mov files recorded in "High Efficiency" (HEVC / H.265) are the usual cause.
+ */
+function cannotPlay(name, why) {
+  const iphone = /\.(mov|hevc)$/i.test(name);
+  const hevc = 'iPhone videos are often saved as "High Efficiency" (HEVC), which many browsers can\'t decode.';
+  const fixes = iphone
+    ? 'To fix it: open the app in Safari, or in Chrome or Edge on a Mac or Windows PC that supports HEVC; or convert the video to MP4 (H.264), for example by exporting it from the Photos app. For future recordings, set the iPhone to Settings → Camera → Formats → Most Compatible.'
+    : 'To fix it: try another browser (Chrome, Edge or Safari), or convert the video to MP4 (H.264).';
+  if (why === 'audio-only') {
+    return `This browser can open ${name} but can only play its sound, not its picture: the video is in a format this browser can't decode. ${iphone ? hevc + ' ' : ''}${fixes}`;
+  }
+  const cause = `the file may be damaged or incomplete (for example, still copying or downloading), or saved in a format this browser can't decode.${iphone ? ' ' + hevc : ''}`;
+  if (why === 'hint') return `${cause} ${fixes}`;
+  return `This browser can't ${why === 'decode' ? 'decode' : 'play'} ${name}: ${cause} ${fixes}`;
+}
+
 async function loadFile(file) {
   if (!file.type.startsWith('video/') && !/\.(mp4|mov|m4v|webm|mkv)$/i.test(file.name)) {
     setStatus($('modelStatus'), 'That does not look like a video file.', true);
@@ -146,16 +164,36 @@ async function loadFile(file) {
   renderManualList();
   video.src = state.objectUrl;
   fileBar.busy();
-  setStatus($('modelStatus'), `Opening ${file.name}…`);
+  const name = file.name;
+  const size = file.size >= 1e9 ? `${(file.size / 1e9).toFixed(1)} GB` : `${Math.max(0.1, file.size / 1e6).toFixed(1)} MB`;
+  setStatus($('modelStatus'), `Opening ${name} (${size})… Your browser is reading the video from this computer and decoding the first frame. Nothing is uploaded.`);
+  let slowTimer = null;
   try {
     await new Promise((res, rej) => {
-      video.addEventListener('loadeddata', res, { once: true });
-      video.addEventListener('error', () => rej(new Error('This browser cannot play this video format.')), { once: true });
+      // Stage 1: the browser has read the file's header (size, length).
+      video.addEventListener('loadedmetadata', () => {
+        if (!video.videoWidth) return; // checked again below once data arrives
+        setStatus($('modelStatus'), `Opening ${name}: found a ${video.videoWidth}×${video.videoHeight} video, ${fmtTime(video.duration)} long. Decoding the first frame…`);
+      }, { once: true });
+      // Stage 2: the first frame is decoded. A file whose video the browser
+      // can't decode can still get here with only its audio (width 0).
+      video.addEventListener('loadeddata', () => (video.videoWidth ? res() : rej(new Error(cannotPlay(name, 'audio-only')))), { once: true });
+      video.addEventListener('error', () => {
+        const code = video.error && video.error.code;
+        rej(new Error(cannotPlay(name, code === 3 ? 'decode' : 'format')));
+      }, { once: true });
+      // Some browsers never report an error for a format they can't decode;
+      // they just keep waiting. Explain what may be going on.
+      slowTimer = setTimeout(() => {
+        setStatus($('modelStatus'), `Still opening ${name} (${size})… Large files can take a little while. If this doesn't finish within a minute, ${cannotPlay(name, 'hint')}`);
+      }, 10000);
     });
   } catch (err) {
     setStatus($('modelStatus'), err.message, true);
+    video.removeAttribute('src'); video.load();
     return;
   } finally {
+    clearTimeout(slowTimer);
     fileBar.hide();
   }
   setStatus($('modelStatus'), '');
