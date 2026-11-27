@@ -167,6 +167,10 @@ Feedback: *"it's often missing faces with dark skin during testing."*
     - Some browsers never report an error for a format they can't decode, and just keep waiting. After 10 s the message says it's still opening and explains the likely cause.
     - Tested in Chromium with an H.264 .mov (opens), an HEVC .mov with and without audio, random bytes named .mov, a truncated MP4, and a simulated hang.
 
+44. **iPhone/iPad Safari stuck on "Opening …"** (reported on iPhone Safari with an iPhone .mov). The format wasn't the cause: iOS Safari plays HEVC natively. iOS Safari reads a video's header but decodes no picture until playback starts, so `loadeddata` (which the app waited for) never fired. Now, if no frame has arrived 0.4 s after the header is read, the app plays the video muted for a moment, pauses and rewinds to 0:00. Muted inline playback (the `<video>` already has `playsinline`) needs no tap on iOS, and the sound setting is restored.
+    - Tested in Chromium with a script that imitates iOS: it withholds `loadeddata` and keeps `readyState` at 1 until `play()` is called. Without the fix the app stuck on "Decoding the first frame…", as reported; with it, step 2 opens with the video paused at 0:00 and unmuted. Desktop behaviour is unchanged.
+    - Not tested on a real iPhone (none available in the build environment). The later steps on iOS are also unverified: frame-by-frame seeking, memory use with the models loaded, and export, which plays the video with sound and records it.
+
 ## Known limitations / ideas for later
 
 - **Recognition on darker faces is untested.** This round fixed *detection*. If the recognition model also separates darker-skinned children less well, two of them could score as the same person and the wrong child could be kept visible. That is worse than a missed detection and needs its own test, ideally with consenting real footage.

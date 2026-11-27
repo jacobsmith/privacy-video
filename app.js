@@ -149,6 +149,22 @@ function cannotPlay(name, why) {
   return `This browser can't ${why === 'decode' ? 'decode' : 'play'} ${name}: ${cause} ${fixes}`;
 }
 
+// Get the browser to decode the first frame (see loadFile). Muted, inline
+// playback is allowed without a tap on iOS; the sound setting is restored.
+async function nudgeFirstFrame() {
+  const wasMuted = video.muted;
+  video.muted = true;
+  try {
+    await video.play();
+    video.pause();
+    video.currentTime = 0;
+  } catch (err) {
+    console.warn('[privacy-blur] could not start playback to decode the first frame', err);
+  } finally {
+    video.muted = wasMuted;
+  }
+}
+
 async function loadFile(file) {
   if (!file.type.startsWith('video/') && !/\.(mp4|mov|m4v|webm|mkv)$/i.test(file.name)) {
     setStatus($('modelStatus'), 'That does not look like a video file.', true);
@@ -172,8 +188,11 @@ async function loadFile(file) {
     await new Promise((res, rej) => {
       // Stage 1: the browser has read the file's header (size, length).
       video.addEventListener('loadedmetadata', () => {
-        if (!video.videoWidth) return; // checked again below once data arrives
-        setStatus($('modelStatus'), `Opening ${name}: found a ${video.videoWidth}×${video.videoHeight} video, ${fmtTime(video.duration)} long. Decoding the first frame…`);
+        if (video.videoWidth) setStatus($('modelStatus'), `Opening ${name}: found a ${video.videoWidth}×${video.videoHeight} video, ${fmtTime(video.duration)} long. Decoding the first frame…`);
+        // iPhone/iPad Safari reads the file's header but doesn't decode any
+        // picture until playback starts, so 'loadeddata' never arrives on its
+        // own. If no frame shows up quickly, play muted for a moment and pause.
+        setTimeout(() => { if (video.readyState < 2) nudgeFirstFrame(); }, 400);
       }, { once: true });
       // Stage 2: the first frame is decoded. A file whose video the browser
       // can't decode can still get here with only its audio (width 0).
