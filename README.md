@@ -54,6 +54,7 @@ In step 4, pause where something identifiable is visible and click **✎ Draw bl
 | `index.html`, `style.css` | UI (4-step wizard) plus the CSP privacy lock |
 | `app.js` | UI controller: file loading, face picker, preview, export |
 | `engine.js` | Detection, matching, tracking, smoothing, blur rendering |
+| `probe.js` | Reads frame rate, codec, HDR and sound format from MP4/MOV file headers (locally) for the video info panel |
 | `serve.py` | Local static server, loopback only, with the correct `.wasm` MIME type |
 | `vendor/` | `@vladmandic/face-api` 1.7.15 (bundles TF.js 4.22), plus TF.js WASM binaries (MIT / Apache-2.0) |
 | `models/` | SSD-MobileNetV1 face detector, 68-point landmarks, a 128-d face-recognition model, and MoveNet MultiPose (Google, Apache-2.0; TF.js conversion from `@vladmandic/human-models`) for the body-pose backup |

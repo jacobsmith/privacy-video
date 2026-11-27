@@ -215,11 +215,29 @@ export function seek(video, t) {
   });
 }
 
+// Faces are searched for in frames of at most 1080p (1920×1080, either
+// orientation). Larger videos (4K) are scaled down for analysis only: it is
+// much faster and uses far less memory (which matters on phones), and the
+// detector shrinks frames to ~512px internally anyway. The preview and the
+// exported video stay at full resolution; boxes are scaled back up.
+export const ANALYSIS_MAX = { long: 1920, short: 1080 };
+export function analysisScale(w, h) {
+  if (!w || !h) return 1;
+  return Math.min(1, ANALYSIS_MAX.long / Math.max(w, h), ANALYSIS_MAX.short / Math.min(w, h));
+}
+export function analysisSize(w, h) {
+  const s = analysisScale(w, h);
+  return { w: Math.round(w * s), h: Math.round(h * s), scale: s };
+}
+export const scaleBox = (b, k) => ({ x: b.x * k, y: b.y * k, w: b.w * k, h: b.h * k });
+
+/** Draw the current video frame into `canvas` at analysis size; returns the scale used. */
 export function grabFrame(video, canvas) {
-  if (canvas.width !== video.videoWidth) canvas.width = video.videoWidth;
-  if (canvas.height !== video.videoHeight) canvas.height = video.videoHeight;
-  canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-  return canvas;
+  const { w, h, scale } = analysisSize(video.videoWidth, video.videoHeight);
+  if (canvas.width !== w) canvas.width = w;
+  if (canvas.height !== h) canvas.height = h;
+  canvas.getContext('2d').drawImage(video, 0, 0, w, h);
+  return scale;
 }
 
 async function detectOn(input, minConfidence) {
@@ -505,7 +523,7 @@ export async function analyzeVideo(video, { fps = 10, minConfidence = 0.4, small
   for (let i = 0; i < times.length; i++) {
     if (isCancelled && isCancelled()) throw new Error('cancelled');
     await seek(video, times[i]);
-    grabFrame(video, canvas);
+    const scale = grabFrame(video, canvas);
     sctx.drawImage(canvas, 0, 0, 32, 18);
     const px = sctx.getImageData(0, 0, 32, 18).data;
     const cur = new Float32Array(32 * 18);
@@ -517,8 +535,11 @@ export async function analyzeVideo(video, { fps = 10, minConfidence = 0.4, small
     samples.push({ t: times[i], dets, cut: diff > 35, diff });
     if (onProgress) {
       const elapsed = (performance.now() - started) / 1000;
+      // dets are still in analysis-canvas coordinates here (for the live preview)
       onProgress({ i: i + 1, n: times.length, canvas, dets, eta: (elapsed / (i + 1)) * (times.length - i - 1) });
     }
+    // Store boxes in full-resolution video coordinates.
+    if (scale !== 1) for (const d of dets) d.box = scaleBox(d.box, 1 / scale);
   }
   return samples;
 }

@@ -1,9 +1,10 @@
 // Privacy Blur — UI controller.
 import {
-  initModels, poseAvailable, seek, grabFrame, detectFaces, cropThumb, clusterFaces,
+  initModels, poseAvailable, seek, grabFrame, detectFaces, cropThumb, clusterFaces, scaleBox, analysisSize,
   analyzeVideo, linkTracks, buildTimeline, regionsAt, drawFrame,
 } from './engine.js';
 import { VERSION, BUILT_UTC } from './version.js';
+import { probeVideoFile } from './probe.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -47,6 +48,7 @@ function showStep(n) {
     b.classList.toggle('active', +b.dataset.step === n);
   });
   if (n !== 2 && !video.paused) video.pause();
+  if (n === 3) renderScanPlan();
   if (n === 4) enterPreview();
   if (n !== 4) stopPreviewLoop();
 }
@@ -62,6 +64,69 @@ function fmtTime(s) {
   const m = Math.floor(s / 60), sec = Math.floor(s % 60);
   return `${m}:${String(sec).padStart(2, '0')}`;
 }
+
+const fmtBytes = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`);
+const fmtInt = (n) => Math.round(n).toLocaleString();
+function resLabel(w, h) {
+  const s = Math.min(w, h);
+  return s >= 2160 ? '4K' : s >= 1440 ? '1440p' : s >= 1080 ? '1080p' : s >= 720 ? '720p' : s >= 480 ? '480p' : 'low resolution';
+}
+function fmtDuration(sec) {
+  if (sec < 90) return `${Math.max(1, Math.round(sec))} s`;
+  if (sec < 5400) return `${Math.round(sec / 60)} min`;
+  return `${(sec / 3600).toFixed(1)} h`;
+}
+
+// ---------------------------------------------------------------------------
+// Video facts (step 2) and what will be scanned (step 3)
+// ---------------------------------------------------------------------------
+function renderVideoInfo() {
+  const el = $('videoInfo');
+  const f = state.file, p = state.probe || {};
+  if (!f || !video.videoWidth) { el.hidden = true; return; }
+  const w = video.videoWidth, h = video.videoHeight, dur = video.duration;
+  const a = analysisSize(w, h);
+  const orient = w > h ? 'landscape' : h > w ? 'portrait' : 'square';
+  const rows = [
+    ['File', `${f.name} · ${fmtBytes(f.size)}`],
+    ['Resolution', `${w}×${h} · ${resLabel(w, h)} · ${orient}`,
+      a.scale < 1 ? `Faces are searched for at ${a.w}×${a.h} to save time and memory. The preview and export keep the full ${w}×${h}.` : ''],
+    ['Length', fmtTime(dur)],
+  ];
+  if (p.fps) rows.push(['Frame rate', `${p.fps >= 10 ? Math.round(p.fps) : p.fps.toFixed(1)} fps · ${fmtInt(p.frames)} frames`]);
+  if (p.videoCodec) rows.push(['Video', [p.videoCodec, p.hdr, p.container].filter(Boolean).join(' · ')]);
+  if (Number.isFinite(dur) && dur > 0) rows.push(['Bitrate', `${(f.size * 8 / dur / 1e6).toFixed(1)} Mbit/s average${p.hasAudio ? ', incl. sound' : ''}`]);
+  if (p.hasAudio !== undefined) rows.push(['Sound', p.hasAudio ? p.audioCodec || 'yes' : 'no sound track']);
+  el.innerHTML = '';
+  for (const [k, v, note] of rows) {
+    const dt = document.createElement('dt'); dt.textContent = k;
+    const dd = document.createElement('dd'); dd.textContent = v;
+    if (note) { const n = document.createElement('div'); n.className = 'note'; n.textContent = note; dd.append(n); }
+    el.append(dt, dd);
+  }
+  el.hidden = false;
+}
+
+// Per-frame cost of each mode relative to the snapshot scan (which runs the
+// detector with the contrast boost), from the measurements in DECISIONS.md.
+const MODE_COST = { fast: 0.47, medium: 1.2, slow: 5.1 };
+function renderScanPlan() {
+  const dur = video.duration;
+  if (!state.file || !Number.isFinite(dur) || !video.videoWidth) { $('scanPlan').textContent = ''; return; }
+  const scanFps = +$('fps').value;
+  const n = Math.ceil(dur * scanFps);
+  const a = analysisSize(video.videoWidth, video.videoHeight);
+  const total = state.probe && state.probe.frames;
+  let text = `At ${scanFps} frames/sec, ${fmtInt(n)} frames will be scanned${total ? ` (of the video's ${fmtInt(total)})` : ''}, at ${a.w}×${a.h}`
+    + (a.scale < 1 ? ` (scaled down from ${video.videoWidth}×${video.videoHeight}; the export keeps full resolution).` : '.');
+  const snap = state.snapTimes && state.snapTimes.length ? state.snapTimes.reduce((x, y) => x + y, 0) / state.snapTimes.length : null;
+  for (const el of document.querySelectorAll('.mode-est')) {
+    el.textContent = snap ? `≈ ${fmtDuration((n * snap * MODE_COST[el.dataset.mode]) / 1000)} on this device` : '';
+  }
+  text += snap ? ' Time estimates are rough, based on how long the snapshot scan took on this device.' : ' Run the snapshot scan in step 2 to see time estimates for this device.';
+  $('scanPlan').textContent = text;
+}
+$('fps').addEventListener('change', renderScanPlan);
 
 function setStatus(el, text, isError = false) {
   el.textContent = text;
@@ -223,10 +288,16 @@ async function loadFile(file) {
     fileBar.hide();
   }
   setStatus($('modelStatus'), '');
+  state.probe = {}; state.snapTimes = [];
+  renderVideoInfo(); renderScanPlan();
+  probeVideoFile(file).then((p) => {
+    if (state.file !== file) return; // another file was chosen meanwhile
+    state.probe = p; renderVideoInfo(); renderScanPlan();
+  });
   renderPeople();
   enableStep(2); enableStep(3, false); enableStep(4, false);
   $('downloadLink').hidden = true;
-  setStatus($('scanStatus'), `${file.name} — ${video.videoWidth}×${video.videoHeight}, ${fmtTime(video.duration)}`);
+  setStatus($('scanStatus'), 'Click "Find faces in snapshots" to look for faces in a few moments of the video.');
   showStep(2);
 }
 
@@ -250,15 +321,19 @@ async function scanAt(times) {
       if (state.scannedTimes.has(key)) continue;
       setStatus($('scanStatus'), times.length > 1 ? `Looking for faces in snapshot ${i + 1} of ${times.length}…` : 'Looking for faces in this frame…');
       if (times.length > 1) scanBar.set(i / times.length); else scanBar.busy();
+      const t0 = performance.now();
       await seek(video, t);
-      grabFrame(video, snapCanvas);
+      const scale = grabFrame(video, snapCanvas);
       // Contrast enhancement here too, so darker-skinned students in dim or
       // backlit shots show up in the picker and can be kept.
       const dets = await detectFaces(snapCanvas, { minConfidence: 0.5, enhance: true });
       state.scannedTimes.add(key);
+      // time per snapshot (seek + detection) → processing-time estimates in step 3
+      (state.snapTimes ||= []).push(performance.now() - t0);
       for (const d of dets) {
         if (d.box.w < 24 || !d.descriptor) continue; // too small to be useful as a reference
-        state.faces.push({ id: ++faceSeq, t, box: d.box, descriptor: d.descriptor, thumb: cropThumb(snapCanvas, d.box), keep: false });
+        // thumbnail from the analysis-size frame; box stored at full video resolution
+        state.faces.push({ id: ++faceSeq, t, box: scaleBox(d.box, 1 / scale), descriptor: d.descriptor, thumb: cropThumb(snapCanvas, d.box), keep: false });
         found++;
       }
     }

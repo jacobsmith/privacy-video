@@ -176,6 +176,17 @@ Feedback: *"it's often missing faces with dark skin during testing."*
     - It is set by `tools/stamp-version.sh`, run right before each commit. Times are UTC, so the stamp is the same on every device and matches git history. Hovering shows the full date.
     - A git pre-commit hook could do this automatically, but hooks can't be shipped in a repo and installing one was not done here; running the script by hand keeps commits predictable.
 
+## Round 5: 1080p analysis cap and video facts (2026-11-27)
+
+46. **Analysis capped at 1080p** (requested). Frames are scaled to fit 1920×1080 (either orientation) before faces are searched for; a 4K video is analysed at 1920×1080. The preview and the exported video stay at full resolution; detection boxes are scaled back up before tracking, so hold, edge and manual-blur logic all work in full-resolution coordinates. Snapshot thumbnails are cut from the analysis-size frame.
+    - Why: much less time and memory per frame (4K is 4× the pixels of 1080p; the contrast boost is plain JavaScript per pixel, and phones have tight memory limits), with little accuracy cost, because the detector shrinks frames to ~512 px anyway. 1080p rather than 480p keeps enough pixels for the zoomed-in sections and head crops that find small and darker faces (see #35–38).
+    - Tested with a 4K clip: boxes line up with faces in the 3840×2160 preview, and the kept person stays visible.
+
+47. **Video facts under the player** (requested: "show more metrics about video size"): file size, resolution with a label (4K / 1080p / 720p…) and orientation, a note when analysis is scaled down, length, frame rate and frame count, codec, HDR, container, average bitrate, and sound format.
+    - Browsers don't expose frame rate, codec, HDR or sound format, so `probe.js` reads them from the file's index ('moov' box) with `File.slice`, never the video data. It handles MP4, MOV and M4V; other formats (WebM, MKV) show only what the browser knows. HDR comes from the colour box (HLG / PQ, both 'nclx' and QuickTime's 'nclc') or a Dolby Vision box.
+    - Checked against generated files: 4K H.264 HLG MOV with AAC, HEVC MOV with and without sound, portrait 1080×1920 at 60 fps, WebM, random bytes and a truncated MP4 (the last three correctly return nothing).
+    - Step 3 now says what will be scanned ("At 10 frames/sec, 1,510 frames will be scanned (of the video's 4,530), at 1920×1080 …") and gives a rough time per mode on this device. The estimate is based on how long the snapshot scan took per frame, times each mode's measured cost relative to it. Test: Fast predicted ≈22 s, took 28 s.
+
 ## Known limitations / ideas for later
 
 - **Recognition on darker faces is untested.** This round fixed *detection*. If the recognition model also separates darker-skinned children less well, two of them could score as the same person and the wrong child could be kept visible. That is worse than a missed detection and needs its own test, ideally with consenting real footage.

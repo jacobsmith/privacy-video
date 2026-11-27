@@ -65,6 +65,7 @@
       <div class="split">
         <div class="player-col">
           <video id="video" controls playsinline preload="auto"></video>
+          <dl class="video-info" id="videoInfo" hidden></dl>
           <div class="row">
             <label>Snapshots <input type="number" id="snapCount" min="2" max="40" value="8"></label>
             <button id="scanBtn" class="primary">Find faces in snapshots</button>
@@ -89,26 +90,27 @@
     <section class="step" id="step3" hidden>
       <h1>Process the video</h1>
       <p class="lead">Every part of the video is scanned for faces on this computer. Faces that match the student(s) you picked stay visible; all other faces are blurred.</p>
+      <p class="scan-plan" id="scanPlan"></p>
       <fieldset class="modes" id="modePicker">
         <legend>How thorough should the face search be?</legend>
         <label class="mode">
           <input type="radio" name="mode" value="fast">
           <span class="mode-body">
-            <span class="mode-title">Fast <span class="mode-time">quickest</span></span>
+            <span class="mode-title">Fast <span class="mode-time">quickest<span class="mode-est" data-mode="fast"></span></span></span>
             <span class="mode-text">Face detector only. Fine for bright, close-up footage. Misses more faces in dim, backlit or shadowed shots (especially darker-skinned faces) and faces far from the camera.</span>
           </span>
         </label>
         <label class="mode">
           <input type="radio" name="mode" value="medium" checked>
           <span class="mode-body">
-            <span class="mode-title">Medium <span class="mode-time">about 2–3× longer than Fast</span> <span class="mode-badge">Recommended</span></span>
+            <span class="mode-title">Medium <span class="mode-time">about 2–3× longer than Fast<span class="mode-est" data-mode="medium"></span></span> <span class="mode-badge">Recommended</span></span>
             <span class="mode-text">Adds a contrast-boost pass and a body-pose backup. Finds most faces that are hard to see in poor lighting, including darker-skinned faces. May blur a few extra heads or background patches.</span>
           </span>
         </label>
         <label class="mode">
           <input type="radio" name="mode" value="slow">
           <span class="mode-body">
-            <span class="mode-title">Slow <span class="mode-time">about 10× longer than Fast</span></span>
+            <span class="mode-title">Slow <span class="mode-time">about 10× longer than Fast<span class="mode-est" data-mode="slow"></span></span></span>
             <span class="mode-text">Also searches the frame in zoomed-in sections. Best for wide classroom shots, small or distant faces, and very dark footage. Blurs a few more non-faces.</span>
           </span>
         </label>
