@@ -92,7 +92,9 @@
           <output id="minConfOut">0.35</output>
           <small>Lower finds more faces (incl. blurry/turned) but may blur a few non-faces.</small>
         </label>
-        <label class="check"><input type="checkbox" id="smallFaces"> Small / distant faces mode <small>(≈5× slower; use for wide classroom shots)</small></label>
+        <label class="check"><input type="checkbox" id="enhance" checked> Boost contrast to find faces in dim, backlit or shadowed shots <small>(recommended; finds many more darker-skinned faces in poor lighting; ≈2× slower)</small></label>
+        <label class="check"><input type="checkbox" id="poseLayer" checked> Body-pose backup: blur the head of anyone whose face wasn't found <small>(recommended; may blur a few extra heads)</small></label>
+        <label class="check"><input type="checkbox" id="smallFaces"> Small / distant faces mode <small>(≈5× slower; use for wide classroom shots, and also helps with darker faces in poor light)</small></label>
       </details>
       <div class="actions">
         <button id="analyzeBtn" class="primary">Start processing</button>

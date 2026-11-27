@@ -1,6 +1,6 @@
 // Privacy Blur — UI controller.
 import {
-  initModels, seek, grabFrame, detectFaces, cropThumb, clusterFaces,
+  initModels, poseAvailable, seek, grabFrame, detectFaces, cropThumb, clusterFaces,
   analyzeVideo, linkTracks, buildTimeline, regionsAt, drawFrame,
 } from './engine.js';
 
@@ -70,6 +70,7 @@ function setStatus(el, text, isError = false) {
     const params = new URLSearchParams(location.search);
     const backend = await initModels(params.get('backend') || undefined);
     state.ready = true;
+    if (!poseAvailable()) { $('poseLayer').checked = false; $('poseLayer').disabled = true; }
     setStatus($('modelStatus'), `Face detection ready (${((performance.now() - t0) / 1000).toFixed(1)}s).`);
     $('backendInfo').textContent = `Face models run locally via TensorFlow.js (${backend} backend). No data leaves this device.`;
   } catch (err) {
@@ -142,10 +143,12 @@ async function scanAt(times) {
       setStatus($('scanStatus'), `Looking for faces in snapshot ${i + 1} of ${times.length}…`);
       await seek(video, t);
       grabFrame(video, snapCanvas);
-      const dets = await detectFaces(snapCanvas, { minConfidence: 0.5 });
+      // Contrast enhancement here too, so darker-skinned students in dim or
+      // backlit shots show up in the picker and can be kept.
+      const dets = await detectFaces(snapCanvas, { minConfidence: 0.5, enhance: true });
       state.scannedTimes.add(key);
       for (const d of dets) {
-        if (d.box.w < 24) continue; // too small to be useful as a reference
+        if (d.box.w < 24 || !d.descriptor) continue; // too small to be useful as a reference
         state.faces.push({ id: ++faceSeq, t, box: d.box, descriptor: d.descriptor, thumb: cropThumb(snapCanvas, d.box), keep: false });
         found++;
       }
@@ -231,7 +234,10 @@ $('toStep3').addEventListener('click', () => {
 $('minConf').addEventListener('input', (e) => { $('minConfOut').textContent = (+e.target.value).toFixed(2); });
 
 function analysisOptions() {
-  return { fps: +$('fps').value, minConfidence: +$('minConf').value, smallFaces: $('smallFaces').checked };
+  return {
+    fps: +$('fps').value, minConfidence: +$('minConf').value, smallFaces: $('smallFaces').checked,
+    enhance: $('enhance').checked, pose: $('poseLayer').checked && poseAvailable(),
+  };
 }
 
 $('analyzeBtn').addEventListener('click', async () => {
@@ -251,8 +257,15 @@ $('analyzeBtn').addEventListener('click', async () => {
         ac.width = canvas.width; ac.height = canvas.height;
         actx.drawImage(canvas, 0, 0);
         actx.lineWidth = Math.max(2, canvas.width / 400);
-        actx.strokeStyle = '#facc15';
-        for (const d of dets) actx.strokeRect(d.box.x, d.box.y, d.box.w, d.box.h);
+        // yellow = face detector, cyan = found after contrast boost,
+        // orange = found via the body-pose backup
+        const colour = { face: '#facc15', enhanced: '#22d3ee', 'pose+face': '#fb923c', pose: '#fb923c' };
+        for (const d of dets) {
+          actx.strokeStyle = colour[d.source] || '#facc15';
+          actx.setLineDash(d.source === 'pose' ? [actx.lineWidth * 3, actx.lineWidth * 2] : []);
+          actx.strokeRect(d.box.x, d.box.y, d.box.w, d.box.h);
+        }
+        actx.setLineDash([]);
       }
     }, () => state.cancel);
     state.samples = samples;

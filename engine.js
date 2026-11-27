@@ -39,13 +39,25 @@ export async function initModels(preferredBackend) {
     faceapi.nets.faceLandmark68Net.loadFromUri(modelUrl),
     faceapi.nets.faceRecognitionNet.loadFromUri(modelUrl),
   ]);
+  // Body-pose model (MoveNet MultiPose). Optional: if it fails to load, face
+  // detection still works and the pose backup is simply unavailable.
+  try {
+    poseModel = await tf.loadGraphModel(new URL('./models/movenet-multipose.json', import.meta.url).href);
+  } catch (err) {
+    console.warn('[privacy-blur] pose model unavailable', err);
+    poseModel = null;
+  }
 
   // Warm up (first inference compiles shaders and is slow).
   const warm = document.createElement('canvas');
   warm.width = warm.height = 128;
   await faceapi.detectAllFaces(warm, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }));
+  if (poseModel) await detectPeople(warm);
   return backend;
 }
+
+let poseModel = null;
+export const poseAvailable = () => !!poseModel;
 
 // ---------------------------------------------------------------------------
 // Geometry helpers
@@ -135,12 +147,7 @@ async function detectOn(input, minConfidence) {
 
 const tileCanvas = document.createElement('canvas');
 
-/**
- * Detect faces in a frame. With `smallFaces`, additionally run the detector on
- * four overlapping zoomed-in tiles, because the SSD detector downsizes input to
- * 512px and misses small faces in wide classroom shots.
- */
-export async function detectFaces(canvas, { minConfidence = 0.4, smallFaces = false } = {}) {
+async function detectWithTiles(canvas, minConfidence, smallFaces) {
   let dets = await detectOn(canvas, minConfidence);
   if (smallFaces) {
     const W = canvas.width, H = canvas.height;
@@ -155,6 +162,202 @@ export async function detectFaces(canvas, { minConfidence = 0.4, smallFaces = fa
     dets = nms(dets);
   }
   return dets;
+}
+
+// True if box `b` substantially overlaps any detection already in `dets`.
+const overlapsAny = (b, dets, frac = 0.3) =>
+  dets.some((d) => iou(d.box, b) > 0.1 || intersection(d.box, b) / Math.min(area(d.box), area(b)) > frac);
+
+/**
+ * Detect faces in a frame. Layers, each only adding faces the earlier ones missed:
+ *  1. The SSD face detector on the frame as-is (plus 4 zoomed tiles with
+ *     `smallFaces`, because SSD downsizes input to 512px).
+ *  2. `enhance`: the same detector on a local-contrast-enhanced copy (CLAHE).
+ *     Recovers faces with little contrast: darker skin in dim, backlit or
+ *     side-lit footage. Faces already found in layer 1 keep their original
+ *     descriptor (from the unaltered pixels) for matching.
+ *  3. `pose`: a body-pose model finds people; for each person whose head has
+ *     no face box yet, the head region is enlarged, contrast-enhanced and
+ *     searched again. If still no face is found, the estimated head box is
+ *     returned with `descriptor: null`, which is always blurred.
+ * Every layer can only add blur, never remove it.
+ */
+export async function detectFaces(canvas, { minConfidence = 0.4, smallFaces = false, enhance = false, pose = false } = {}) {
+  const dets = await detectWithTiles(canvas, minConfidence, smallFaces);
+  for (const d of dets) d.source = 'face';
+  let enhanced = null;
+  if (enhance) {
+    enhanced = enhanceContrast(canvas);
+    for (const d of await detectWithTiles(enhanced, minConfidence, smallFaces)) {
+      if (!overlapsAny(d.box, dets)) { d.source = 'enhanced'; dets.push(d); }
+    }
+  }
+  if (pose && poseModel) {
+    const people = await detectPeople(enhanced || canvas, smallFaces);
+    for (const p of people) {
+      if (overlapsAny(p.head, dets)) continue;
+      const found = await searchHead(canvas, p.head, minConfidence);
+      if (found && !overlapsAny(found.box, dets)) { found.source = 'pose+face'; dets.push(found); }
+      else if (!found) dets.push({ box: p.head, score: p.score, descriptor: null, source: 'pose' });
+    }
+  }
+  return dets;
+}
+
+// ---------------------------------------------------------------------------
+// Contrast enhancement (CLAHE on luminance)
+// ---------------------------------------------------------------------------
+
+/**
+ * Contrast-limited adaptive histogram equalisation on luminance, with colour
+ * kept by scaling RGB by Y'/Y. Each region of the frame gets its own tone
+ * curve, so a dark face next to a bright window is lifted without blowing out
+ * the window. Returns a new canvas; the input is untouched.
+ */
+export function enhanceContrast(src, { clip = 3, grid = 8 } = {}) {
+  const w = src.width, h = src.height;
+  const out = document.createElement('canvas');
+  out.width = w; out.height = h;
+  const x = out.getContext('2d', { willReadFrequently: true });
+  x.drawImage(src, 0, 0);
+  const im = x.getImageData(0, 0, w, h), d = im.data;
+  const Y = new Uint8Array(w * h);
+  for (let i = 0, p = 0; i < w * h; i++, p += 4) Y[i] = Math.min(255, (77 * d[p] + 150 * d[p + 1] + 29 * d[p + 2]) >> 8);
+  const gx = grid, gy = Math.max(1, Math.round((grid * h) / w)), tw = w / gx, th = h / gy;
+  const maps = [];
+  const hist = new Float32Array(256);
+  for (let ty = 0; ty < gy; ty++) for (let tx = 0; tx < gx; tx++) {
+    hist.fill(0);
+    let n = 0;
+    for (let yy = Math.floor(ty * th); yy < Math.floor((ty + 1) * th); yy++) {
+      for (let xx = Math.floor(tx * tw); xx < Math.floor((tx + 1) * tw); xx++) { hist[Y[yy * w + xx]]++; n++; }
+    }
+    const lim = Math.max(1, (clip * n) / 256);
+    let excess = 0;
+    for (let k = 0; k < 256; k++) if (hist[k] > lim) { excess += hist[k] - lim; hist[k] = lim; }
+    const add = excess / 256, m = new Float32Array(256);
+    let acc = 0;
+    for (let k = 0; k < 256; k++) { acc += hist[k] + add; m[k] = (acc / Math.max(1, n)) * 255; }
+    maps.push(m);
+  }
+  for (let yy = 0; yy < h; yy++) {
+    const fy = Math.min(gy - 1, Math.max(0, yy / th - 0.5)), y0 = Math.floor(fy), y1 = Math.min(gy - 1, y0 + 1), ay = fy - y0;
+    for (let xx = 0; xx < w; xx++) {
+      const fx = Math.min(gx - 1, Math.max(0, xx / tw - 0.5)), x0 = Math.floor(fx), x1 = Math.min(gx - 1, x0 + 1), ax = fx - x0;
+      const i = yy * w + xx, v = Y[i];
+      const nv = (maps[y0 * gx + x0][v] * (1 - ax) + maps[y0 * gx + x1][v] * ax) * (1 - ay)
+        + (maps[y1 * gx + x0][v] * (1 - ax) + maps[y1 * gx + x1][v] * ax) * ay;
+      const p = i * 4;
+      if (v > 4) { const g = Math.min(6, nv / v); d[p] *= g; d[p + 1] *= g; d[p + 2] *= g; }
+      else { const a = nv - v; d[p] += a; d[p + 1] += a; d[p + 2] += a; }
+    }
+  }
+  x.putImageData(im, 0, 0);
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Body-pose layer (MoveNet MultiPose): find people, estimate head boxes
+// ---------------------------------------------------------------------------
+
+// MoveNet keypoint order: 0 nose, 1-2 eyes, 3-4 ears, 5-6 shoulders, ...
+const KP_SCORE = 0.25;
+
+/** Estimate a face-sized box from a person's head/shoulder keypoints (pixels). */
+function headBox(kps) {
+  const ok = (i) => kps[i].s >= KP_SCORE;
+  const dist = (a, b) => Math.hypot(kps[a].x - kps[b].x, kps[a].y - kps[b].y);
+  const head = [0, 1, 2, 3, 4].filter(ok);
+  const sw = ok(5) && ok(6) ? dist(5, 6) : 0;
+  const sizes = [];
+  if (ok(3) && ok(4)) sizes.push(dist(3, 4) * 1.25);
+  if (ok(1) && ok(2)) sizes.push(dist(1, 2) * 3.0);
+  if (sw) sizes.push(sw * 0.5);
+  if (head.length >= 2) {
+    const xs = head.map((i) => kps[i].x), ys = head.map((i) => kps[i].y);
+    sizes.push(Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * 1.6);
+  }
+  let cx, cy;
+  if (head.length) {
+    cx = head.reduce((s, i) => s + kps[i].x, 0) / head.length;
+    cy = head.reduce((s, i) => s + kps[i].y, 0) / head.length;
+  } else if (sw) {
+    cx = (kps[5].x + kps[6].x) / 2;
+    cy = (kps[5].y + kps[6].y) / 2 - sw * 0.6;
+  } else return null;
+  if (!sizes.length) return null;
+  const s = Math.max(...sizes);
+  if (s < 10) return null;
+  return { x: cx - s / 2, y: cy - s * 0.55, w: s, h: s * 1.15 };
+}
+
+const poseCanvas = document.createElement('canvas');
+
+async function runPose(src, sx, sy, sw, sh) {
+  const tf = faceapi.tf;
+  // MoveNet MultiPose works best with the long side near 256-320 px (a larger
+  // input finds fewer people). Both sides must be multiples of 32.
+  const long = 320;
+  const k = long / Math.max(sw, sh);
+  const iw = Math.max(32, Math.round((sw * k) / 32) * 32), ih = Math.max(32, Math.round((sh * k) / 32) * 32);
+  poseCanvas.width = iw; poseCanvas.height = ih;
+  poseCanvas.getContext('2d').drawImage(src, sx, sy, sw, sh, 0, 0, iw, ih);
+  const input = tf.tidy(() => tf.browser.fromPixels(poseCanvas).toInt().expandDims(0));
+  const res = poseModel.execute(input);
+  const out = (await res.array())[0];
+  input.dispose(); res.dispose();
+  const people = [];
+  for (const p of out) {
+    if (p[55] < 0.2) continue;
+    const kps = [];
+    for (let j = 0; j < 17; j++) kps.push({ y: sy + p[j * 3] * sh, x: sx + p[j * 3 + 1] * sw, s: p[j * 3 + 2] });
+    const head = headBox(kps);
+    if (head) people.push({ score: p[55], head });
+  }
+  return people;
+}
+
+/**
+ * People in the frame with an estimated head box each. With `tiles`, also
+ * runs on the 4 overlapping 60% tiles (the model handles at most 6 people per
+ * pass and works at ~320px, so tiles help with crowded or wide shots).
+ */
+export async function detectPeople(canvas, tiles = false) {
+  if (!poseModel) return [];
+  const W = canvas.width, H = canvas.height;
+  let people = await runPose(canvas, 0, 0, W, H);
+  if (tiles) {
+    const tw = Math.round(W * 0.6), th = Math.round(H * 0.6);
+    for (const [ox, oy] of [[0, 0], [W - tw, 0], [0, H - th], [W - tw, H - th]]) people.push(...await runPose(canvas, ox, oy, tw, th));
+    people = nms(people.map((p) => ({ box: p.head, score: p.score, head: p.head })), 0.3);
+  }
+  return people;
+}
+
+const headCanvas = document.createElement('canvas');
+
+/**
+ * Cascade: re-run the face detector on an enlarged, contrast-enhanced crop
+ * around an estimated head. Returns a detection in frame coordinates, or null.
+ */
+async function searchHead(canvas, head, minConfidence) {
+  const s = Math.max(head.w, head.h) * 2.2;
+  const cx = head.x + head.w / 2, cy = head.y + head.h / 2;
+  const x0 = Math.max(0, cx - s / 2), y0 = Math.max(0, cy - s / 2);
+  const x1 = Math.min(canvas.width, cx + s / 2), y1 = Math.min(canvas.height, cy + s / 2);
+  if (x1 - x0 < 8 || y1 - y0 < 8) return null;
+  const k = Math.max(1, 256 / Math.max(x1 - x0, y1 - y0)); // enlarge small heads
+  headCanvas.width = Math.round((x1 - x0) * k); headCanvas.height = Math.round((y1 - y0) * k);
+  headCanvas.getContext('2d').drawImage(canvas, x0, y0, x1 - x0, y1 - y0, 0, 0, headCanvas.width, headCanvas.height);
+  const dets = await detectOn(enhanceContrast(headCanvas, { grid: 2 }), minConfidence);
+  let best = null;
+  for (const d of dets) {
+    const b = { x: x0 + d.box.x / k, y: y0 + d.box.y / k, w: d.box.w / k, h: d.box.h / k };
+    // must be roughly where the pose model put the head
+    if (iou(b, head) < 0.1 && intersection(b, head) / area(b) < 0.5) continue;
+    if (!best || d.score > best.score) best = { ...d, box: b };
+  }
+  return best;
 }
 
 export function cropThumb(canvas, box, size = 112) {
@@ -197,7 +400,7 @@ export function clusterFaces(faces, thr = 0.45) {
  * Seek through the video at `fps` samples per second and detect every face.
  * Returns [{t, dets:[{box, score, descriptor}]}].
  */
-export async function analyzeVideo(video, { fps = 10, minConfidence = 0.4, smallFaces = false }, onProgress, isCancelled) {
+export async function analyzeVideo(video, { fps = 10, minConfidence = 0.4, smallFaces = false, enhance = false, pose = false }, onProgress, isCancelled) {
   const canvas = document.createElement('canvas');
   const step = 1 / fps;
   const times = [];
@@ -221,7 +424,7 @@ export async function analyzeVideo(video, { fps = 10, minConfidence = 0.4, small
     let diff = 0;
     if (prevSig) { for (let p = 0; p < cur.length; p++) diff += Math.abs(cur[p] - prevSig[p]); diff /= cur.length; }
     prevSig = cur;
-    const dets = await detectFaces(canvas, { minConfidence, smallFaces });
+    const dets = await detectFaces(canvas, { minConfidence, smallFaces, enhance, pose });
     samples.push({ t: times[i], dets, cut: diff > 35, diff });
     if (onProgress) {
       const elapsed = (performance.now() - started) / 1000;
@@ -250,7 +453,8 @@ export function linkTracks(samples, maxGap = 3) {
         const norm = Math.max(last.box.w, last.box.h, d.box.w, d.box.h);
         const cd = Math.hypot(ax - bx, ay - by) / norm;
         const sizeRatio = d.box.w / last.box.w;
-        const dd = descriptorDistance(last.descriptor, d.descriptor);
+        // Pose-only head boxes have no descriptor: link them on geometry alone.
+        const dd = last.descriptor && d.descriptor ? descriptorDistance(last.descriptor, d.descriptor) : 0.4;
         if (cd < 0.9 + 0.4 * (gap - 1) && sizeRatio > 0.5 && sizeRatio < 2 && dd < 0.75) {
           cands.push({ tr, di, cost: cd + dd });
         }
@@ -284,12 +488,16 @@ export function linkTracks(samples, maxGap = 3) {
 export function buildTimeline(samples, tracks, keepRefs, { threshold = 0.5, hold = 2, edgeHold = 30, frameW = 0, frameH = 0 } = {}) {
   for (const s of samples) s.render = [];
   for (const tr of tracks) {
-    let matched = 0;
+    let matched = 0, voters = 0;
     for (const it of tr.items) {
-      it.det.dist = keepRefs.length ? minDistance(it.det.descriptor, keepRefs) : Infinity;
+      // No descriptor (pose-only head box) = can't be matched = always blurred.
+      it.det.dist = keepRefs.length && it.det.descriptor ? minDistance(it.det.descriptor, keepRefs) : Infinity;
+      if (it.det.descriptor) voters++;
       if (it.det.dist < threshold) matched++;
     }
-    const trackKeep = matched / tr.items.length >= 0.5;
+    // Only real face detections vote, so frames where just the pose backup saw
+    // the kept child don't outvote the frames where their face was matched.
+    const trackKeep = voters > 0 && matched / voters >= 0.5;
     for (const it of tr.items) it.det.keep = trackKeep && it.det.dist < threshold + 0.1;
 
     const pos = new Map();
